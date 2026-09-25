@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import pytest
 from gymnasium.utils.env_checker import check_env
 from market_maker.data.sample_data import generate_synthetic_lob
@@ -121,3 +122,69 @@ def test_reward_captures_realized_fill_edge_not_just_price_drift():
     delta_mtm_buggy = new_mtm - prev_mtm_buggy
     assert delta_mtm_buggy == pytest.approx(0.0)
     assert delta_mtm_buggy != delta_mtm_fixed
+
+
+def test_env_step_reward_reflects_realized_fill_edge_true_integration():
+    """True integration test: builds a MarketMakingEnv with a hand-controlled two-row
+    order book and calls env.step() directly, pinning down the numeric reward that
+    depends on the prev_mtm-before-fills ordering fixed in market_making_env.py.
+
+    Scenario (both rows have identical bid/ask -> zero reference-price drift across
+    the step, isolating the realized fill edge):
+      row0 (current): bid=99.99, ask=100.01 -> ref_price = 100.00
+      row1 (next):    bid=99.99, ask=100.01 -> next_ref_price = 100.00 (no drift)
+                       trade_price=99.0, trade_side="sell", trade_size=20
+
+    Action is chosen (mid_offset=0, spread=min=2 ticks, bid_split=1.0, ask_split=0.0)
+    so that:
+      - bid_price_l1 = 99.99, bid_vol_l1 = total_volume_per_side (10), bid L2 vol = 0
+      - ask_price_l1 = 100.01, ask_vol_l1 = 0, ask_vol_l2 = 10 (ask_price_l2 = 100.02)
+    The next row's sell trade at 99.0 (size 20) crosses and fills the bid order at
+    99.99 for the full 10 units (trade evidence caps/justifies the fill); the ask
+    legs never fill (next_best_bid=99.99 does not reach 100.01/100.02, and the
+    trade is a "sell", not a "buy", so it cannot justify an ask fill).
+
+    Hand-calculation with the CORRECT (fixed) ordering — prev_mtm snapshotted
+    BEFORE fills are applied:
+      prev_mtm = mark_to_market(ref_price=100.0) on an empty account = 0.0
+      after fill: cash = -99.99*10 = -999.9, inventory = 10
+      new_mtm = mark_to_market(next_ref_price=100.0) = -999.9 + 10*100.0 = 0.1
+      expected pnl = new_mtm - prev_mtm = 0.1
+
+    Under the OLD (reverted) ordering — prev_mtm snapshotted AFTER fills, at the
+    (unchanged) reference price — prev_mtm would already equal 0.1 (same cash/
+    inventory, same price), so delta_mtm would be 0.1 - 0.1 = 0.0. This test
+    would fail under that reversion since it asserts pnl != 0.
+    """
+    n_features = 4
+    raw_lob_df = pd.DataFrame({
+        "bid_price_1": [99.99, 99.99],
+        "ask_price_1": [100.01, 100.01],
+        "trade_price": [np.nan, 99.0],
+        "trade_side": [None, "sell"],
+        "trade_size": [0.0, 20.0],
+    })
+    fused_features = np.zeros((2, n_features), dtype=np.float32)
+
+    env = MarketMakingEnv(
+        fused_features=fused_features, raw_lob_df=raw_lob_df, feature_columns=[f"f{i}" for i in range(n_features)],
+        tick_size=0.01, levels_per_side=2, min_spread_ticks=2, max_spread_ticks=8,
+        max_mid_offset_ticks=4, total_volume_per_side=10.0, max_inventory=100.0,
+        fee_per_unit=0.0, reward_config={"type": "truncated_inventory", "inventory_threshold": 40,
+                                          "inventory_penalty": 0.001, "cancellation_penalty": 0.0001, "scale": 1.0},
+        reference_price_mode="midprice", episode_length_steps=1,
+    )
+    env.reset(seed=42)
+    assert env._data_idx == 0  # only one valid start index given the 2-row df + episode_length_steps=1
+
+    action = np.array([0.0, -1.0, 1.0, -1.0], dtype=np.float32)
+    _, reward, terminated, truncated, info = env.step(action)
+
+    assert len(info["fills"]) == 1
+    fill = info["fills"][0]
+    assert fill["side"] == "bid"
+    assert fill["price"] == pytest.approx(99.99)
+    assert fill["volume"] == pytest.approx(10.0)
+
+    assert info["reward_components"]["pnl"] == pytest.approx(0.1, abs=1e-3)
+    assert info["reward_components"]["pnl"] != pytest.approx(0.0, abs=1e-3)
