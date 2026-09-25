@@ -1,1 +1,11 @@
 .DS_Store
+__pycache__/
+*.pyc
+.venv/
+data/raw/
+data/interim/
+data/processed/
+artifacts/
+.env
+*.egg-info/
+.pytest_cache/
