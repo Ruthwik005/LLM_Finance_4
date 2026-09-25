@@ -51,3 +51,14 @@ def test_multiple_windows_have_different_counts():
     aligned = align_sentiment_to_market(market_df, news_df, lookback_minutes=[5, 30], max_age_minutes=240)
     assert aligned.loc[0, "article_count_5"] == 1
     assert aligned.loc[0, "article_count_30"] == 2
+
+
+def test_news_published_exactly_at_timestamp_is_visible():
+    market_df = _market_df(["2024-01-01T10:00:00Z"])
+    news_df = pd.DataFrame({
+        "published_at": pd.to_datetime(["2024-01-01T10:00:00Z"], utc=True),  # EXACTLY at market timestamp
+        "sentiment_score": [0.75],
+    })
+    aligned = align_sentiment_to_market(market_df, news_df, lookback_minutes=[5], max_age_minutes=240)
+    assert aligned.loc[0, "article_count_5"] == 1
+    assert aligned.loc[0, "has_recent_news"] == True
