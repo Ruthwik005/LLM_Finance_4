@@ -32,9 +32,6 @@ def test_full_pipeline_runs_end_to_end_on_synthetic_data(tmp_path):
     splits = chronological_split(lob_df, "timestamp", 0.70, 0.15, 0.15)
 
     train_feats = compute_lob_features(splits["train"], depth=5, return_lags=[1, 5])
-    # Fix timezone mismatch: compute_lob_features loses timezone info, so restore it from the source data
-    import pandas as pd
-    train_feats["timestamp"] = pd.to_datetime(train_feats["timestamp"], utc=True)
     scored_news = score_news_dataframe(news_df, _StubScorer())
     aligned = align_sentiment_to_market(train_feats, scored_news, lookback_minutes=[5, 30], max_age_minutes=240)
     assert not aligned.isna().any().any()

@@ -28,3 +28,12 @@ def test_scaler_fit_on_train_reused_on_validation():
     scaler = fit_scaler(train_feats, feature_cols)
     scaled_val = apply_scaler(val_feats, feature_cols, scaler)
     assert abs(scaled_val["midprice"].mean()) < 5  # reused scaler, not refit on val
+
+
+def test_compute_lob_features_preserves_timezone_awareness():
+    """Verify that compute_lob_features preserves tz-aware timestamp column."""
+    df = generate_synthetic_lob(n_rows=500, depth=5, symbol="BTCUSDT", seed=42)
+    feats = compute_lob_features(df, depth=5, return_lags=[1, 5])
+    # The returned timestamp column must be tz-aware (UTC)
+    assert feats["timestamp"].dt.tz is not None
+    assert str(feats["timestamp"].dt.tz) == "UTC"

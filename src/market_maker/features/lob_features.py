@@ -44,7 +44,7 @@ def compute_lob_features(df: pd.DataFrame, depth: int, return_lags: list[int]) -
     feats["time_of_session"] = seconds_in_day / 86400.0
 
     feats = feats.replace([np.inf, -np.inf], 0.0).fillna(0.0)
-    feats.insert(0, "timestamp", df["timestamp"].values)
+    feats.insert(0, "timestamp", df["timestamp"])
     return feats
 
 
