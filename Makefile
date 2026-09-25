@@ -1,4 +1,4 @@
-.PHONY: install install-frontend sample-data prepare sentiment transformer train evaluate report api frontend demo test
+.PHONY: install install-frontend sample-data prepare sentiment transformer train evaluate evaluate-sac report api frontend demo test
 
 install:
 	python -m venv .venv
@@ -26,6 +26,10 @@ train:
 
 evaluate:
 	python scripts/evaluate.py --config configs/fast_demo.yaml
+
+evaluate-sac:
+	python scripts/evaluate.py --config configs/fast_demo.yaml --model-path artifacts/rl/model.zip \
+		--run-id sac_lob_only --variant SAC_LOB_ONLY
 
 report:
 	python scripts/generate_report.py

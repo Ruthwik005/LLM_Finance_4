@@ -22,7 +22,21 @@ def main() -> None:
     parser.add_argument("--config", required=True)
     parser.add_argument("--run-id", default="heuristic_baseline")
     parser.add_argument("--variant", default="Heuristic")
+    parser.add_argument("--model-path", default=None,
+                         help="Path to a trained SAC model (e.g. artifacts/rl/model.zip). "
+                              "If omitted, falls back to the heuristic market maker.")
+    parser.add_argument("--n-episodes", type=int, default=10)
+    parser.add_argument("--data-mode", choices=["mode_b", "synthetic_smoke_test"], default=None,
+                         help="Explicitly label the data mode for this run's metadata/report banner. "
+                              "If omitted, inferred from the config filename (configs/fast_demo.yaml "
+                              "is the config populated by `make sample-data` and defaults to "
+                              "synthetic_smoke_test; any other config defaults to mode_b).")
     args = parser.parse_args()
+
+    if args.data_mode is not None:
+        data_mode = args.data_mode
+    else:
+        data_mode = "synthetic_smoke_test" if os.path.basename(args.config) == "fast_demo.yaml" else "mode_b"
 
     cfg = load_config(args.config)
     df = load_lob(cfg.data.lob_path)
@@ -43,22 +57,34 @@ def main() -> None:
         fee_per_unit=cfg.simulator.fee_per_unit, reward_config=cfg.reward.model_dump(),
         reference_price_mode=cfg.simulator.reference_price_mode, episode_length_steps=episode_steps,
     )
-    agent = HeuristicMarketMaker()
-    result = run_backtest(env, agent, n_episodes=10, is_heuristic=True, max_inventory=cfg.simulator.max_inventory)
+    if args.model_path:
+        from stable_baselines3 import SAC
+        model = SAC.load(args.model_path)
+        model_path = args.model_path
+        result = run_backtest(env, model, n_episodes=args.n_episodes, is_heuristic=False,
+                               max_inventory=cfg.simulator.max_inventory)
+    else:
+        agent = HeuristicMarketMaker()
+        model_path = "N/A"
+        result = run_backtest(env, agent, n_episodes=args.n_episodes, is_heuristic=True,
+                               max_inventory=cfg.simulator.max_inventory)
     map_values = [mean_absolute_position(inv) for inv in result["inventories"]]
     summary = summarize_episode(result["episode_pnls"], result["inventories"])
     summary["map"] = float(np.mean(map_values)) if map_values else 0.0
 
     run_dir = f"artifacts/evaluation/{args.run_id}"
-    write_run_artifacts(run_dir, config=cfg.model_dump(), metadata={"seed": cfg.project.seed, "model_path": "N/A"},
+    write_run_artifacts(run_dir, config=cfg.model_dump(),
+                         metadata={"seed": cfg.project.seed, "model_path": model_path, "data_mode": data_mode},
                          backtest_result=result, metrics=summary)
 
     engine = get_engine(f"sqlite:///{os.environ.get('MARKET_MAKER_DB_PATH', 'artifacts/market_maker.db')}")
     init_db(engine)
     session = get_session(engine)
-    write_run_to_db(session, run_id=args.run_id, variant=args.variant, seed=cfg.project.seed, model_path="N/A",
-                     config=cfg.model_dump(), backtest_result=result, metrics=summary)
-    session.close()
+    try:
+        write_run_to_db(session, run_id=args.run_id, variant=args.variant, seed=cfg.project.seed,
+                         model_path=model_path, config=cfg.model_dump(), backtest_result=result, metrics=summary)
+    finally:
+        session.close()
 
     logger.info("Evaluation complete for run_id=%s. Summary: %s", args.run_id, summary)
 

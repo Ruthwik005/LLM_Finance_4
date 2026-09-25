@@ -25,6 +25,12 @@ def _load_runs(runs_root: str) -> dict:
         if os.path.isdir(run_dir) and os.path.exists(metrics_path):
             with open(metrics_path) as f:
                 runs[run_id] = json.load(f)
+            metadata_path = os.path.join(run_dir, "metadata.json")
+            metadata = {}
+            if os.path.exists(metadata_path):
+                with open(metadata_path) as f:
+                    metadata = json.load(f)
+            runs[run_id]["_metadata"] = metadata
     return runs
 
 
@@ -33,7 +39,14 @@ def generate_report(runs_root: str, output_path: str, template_sections: list[st
     runs = _load_runs(runs_root)
 
     lines = ["# LLM-Enhanced Financial Market Making — Final Project Report", ""]
-    lines.append("> Data mode: Mode B — real crypto LOB, FNSPID news validated separately (not causally matched).")
+
+    data_modes = {metrics.get("_metadata", {}).get("data_mode", "mode_b") for metrics in runs.values()}
+    has_synthetic = "synthetic_smoke_test" in data_modes
+    has_real = bool(data_modes - {"synthetic_smoke_test"})
+    if has_synthetic:
+        lines.append("> SOFTWARE SMOKE TEST ONLY - NOT A FINANCIAL PERFORMANCE RESULT.")
+    if has_real or not runs:
+        lines.append("> Data mode: Mode B — real crypto LOB, FNSPID news validated separately (not causally matched).")
     lines.append("")
 
     for section in sections:
