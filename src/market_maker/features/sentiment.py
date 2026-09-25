@@ -1,7 +1,13 @@
 from __future__ import annotations
 import os
+from typing import Protocol
 import pandas as pd
 import torch
+
+
+class SentimentScorer(Protocol):
+    def score(self, texts: list[str]) -> pd.DataFrame:
+        ...
 
 
 class FinbertScorer:
@@ -33,7 +39,7 @@ class FinbertScorer:
         return df
 
 
-def score_news_dataframe(news_df: pd.DataFrame, scorer) -> pd.DataFrame:
+def score_news_dataframe(news_df: pd.DataFrame, scorer: SentimentScorer) -> pd.DataFrame:
     texts = (news_df["headline"].fillna("") + " " + news_df.get("body", "").fillna("")).tolist() \
         if "body" in news_df.columns else news_df["headline"].fillna("").tolist()
     sentiment = scorer.score(texts).reset_index(drop=True)
