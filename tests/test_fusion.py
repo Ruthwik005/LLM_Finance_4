@@ -20,3 +20,4 @@ def test_build_fused_dataset_shape_and_clipping():
     assert fused.dtype == np.float32
     assert fused.max() <= 10.0 and fused.min() >= -10.0
     assert len(columns) == expected_dim
+    assert len(columns) == fused.shape[1]
