@@ -23,6 +23,8 @@ class MarketMakingEnv(gym.Env):
         self.feature_columns = feature_columns
         self.tick_size = tick_size
         self.levels_per_side = levels_per_side
+        if levels_per_side != 2:
+            raise ValueError(f"MarketMakingEnv currently only supports levels_per_side=2, got {levels_per_side}")
         self.min_spread_ticks = min_spread_ticks
         self.max_spread_ticks = max_spread_ticks
         self.max_mid_offset_ticks = max_mid_offset_ticks
@@ -67,6 +69,7 @@ class MarketMakingEnv(gym.Env):
 
         row = self._current_row()
         ref_price = compute_reference_price(row["bid_price_1"], row["ask_price_1"], self.reference_price_mode)
+        prev_mtm = self.account.mark_to_market(ref_price)
 
         mid_offset_ticks = mid_offset_frac * self.max_mid_offset_ticks
         spread_ticks = self.min_spread_ticks + (spread_frac + 1.0) / 2.0 * (self.max_spread_ticks - self.min_spread_ticks)
@@ -114,7 +117,6 @@ class MarketMakingEnv(gym.Env):
         for fill in fills:
             self.account.apply_fill(fill["side"], fill["price"], fill["volume"], self.fee_per_unit)
 
-        prev_mtm = self.account.mark_to_market(ref_price)
         next_ref_price = compute_reference_price(next_row["bid_price_1"], next_row["ask_price_1"], self.reference_price_mode)
         new_mtm = self.account.mark_to_market(next_ref_price)
         delta_mtm = new_mtm - prev_mtm
