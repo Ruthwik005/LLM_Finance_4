@@ -35,59 +35,71 @@ def health():
 @app.get("/runs")
 def list_runs():
     session = _session()
-    run_ids = [r.run_id for r in session.query(Run).all()]
-    session.close()
-    return {"run_ids": sorted(run_ids)}
+    try:
+        run_ids = [r.run_id for r in session.query(Run).all()]
+        return {"run_ids": sorted(run_ids)}
+    finally:
+        session.close()
 
 
 @app.get("/runs/{run_id}")
 def run_detail(run_id: str):
     session = _session()
-    run = _require_run(session, run_id)
-    result = {"run_id": run.run_id, "variant": run.variant, "seed": run.seed,
-              "model_path": run.model_path, "created_at": run.created_at.isoformat()}
-    session.close()
-    return result
+    try:
+        run = _require_run(session, run_id)
+        result = {"run_id": run.run_id, "variant": run.variant, "seed": run.seed,
+                  "model_path": run.model_path, "created_at": run.created_at.isoformat()}
+        return result
+    finally:
+        session.close()
 
 
 @app.get("/runs/{run_id}/metrics")
 def run_metrics(run_id: str):
     session = _session()
-    _require_run(session, run_id)
-    metrics = {m.name: m.value for m in session.query(Metric).filter_by(run_id=run_id).all()}
-    session.close()
-    return metrics
+    try:
+        _require_run(session, run_id)
+        metrics = {m.name: m.value for m in session.query(Metric).filter_by(run_id=run_id).all()}
+        return metrics
+    finally:
+        session.close()
 
 
 @app.get("/runs/{run_id}/episodes")
 def run_episodes(run_id: str):
     session = _session()
-    _require_run(session, run_id)
-    episodes = [{"episode": e.episode_index, "pnl": e.pnl}
-                for e in session.query(Episode).filter_by(run_id=run_id).order_by(Episode.episode_index).all()]
-    session.close()
-    return episodes
+    try:
+        _require_run(session, run_id)
+        episodes = [{"episode": e.episode_index, "pnl": e.pnl}
+                    for e in session.query(Episode).filter_by(run_id=run_id).order_by(Episode.episode_index).all()]
+        return episodes
+    finally:
+        session.close()
 
 
 @app.get("/runs/{run_id}/fills")
 def run_fills(run_id: str):
     session = _session()
-    _require_run(session, run_id)
-    fills = [{"episode": f.episode_index, "side": f.side, "price": f.price, "volume": f.volume}
-              for f in session.query(Fill).filter_by(run_id=run_id).all()]
-    session.close()
-    return fills
+    try:
+        _require_run(session, run_id)
+        fills = [{"episode": f.episode_index, "side": f.side, "price": f.price, "volume": f.volume}
+                  for f in session.query(Fill).filter_by(run_id=run_id).all()]
+        return fills
+    finally:
+        session.close()
 
 
 @app.get("/runs/{run_id}/equity-curve")
 def run_equity_curve(run_id: str):
     session = _session()
-    _require_run(session, run_id)
-    episodes = session.query(Episode).filter_by(run_id=run_id).order_by(Episode.episode_index).all()
-    session.close()
-    cumulative = 0.0
-    curve = []
-    for e in episodes:
-        cumulative += e.pnl
-        curve.append({"episode": e.episode_index, "cumulative_pnl": cumulative})
-    return curve
+    try:
+        _require_run(session, run_id)
+        episodes = session.query(Episode).filter_by(run_id=run_id).order_by(Episode.episode_index).all()
+        cumulative = 0.0
+        curve = []
+        for e in episodes:
+            cumulative += e.pnl
+            curve.append({"episode": e.episode_index, "cumulative_pnl": cumulative})
+        return curve
+    finally:
+        session.close()
