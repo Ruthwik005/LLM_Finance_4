@@ -10,6 +10,7 @@ data/interim/*
 !data/interim/.gitkeep
 data/processed/*
 !data/processed/.gitkeep
+artifacts/*.db
 artifacts/*/*
 !artifacts/*/.gitkeep
 .env
