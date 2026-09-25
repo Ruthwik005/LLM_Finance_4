@@ -37,6 +37,14 @@ def main() -> None:
     parser.add_argument("--out", default="artifacts/rl/model.zip")
     args = parser.parse_args()
 
+    if args.variant != "SAC_LOB_ONLY":
+        raise NotImplementedError(
+            f"Variant {args.variant} requires precomputed sentiment/transformer artifacts. "
+            f"Only SAC_LOB_ONLY is currently trainable end-to-end. "
+            f"Other variants (SAC_LOB_TRANSFORMER, SAC_LOB_SENTIMENT, SAC_FULL) require "
+            f"wiring in sentiment/transformer artifacts from Tasks 5/7."
+        )
+
     cfg = load_config(args.config)
     set_global_seed(cfg.project.seed)
 
