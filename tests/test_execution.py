@@ -43,3 +43,36 @@ def test_no_overfill_beyond_outstanding_order_volume():
     fills = sim.step(orders, next_best_bid=99.0, next_best_ask=99.5,
                       next_trade_price=99.0, next_trade_side="sell", next_trade_size=10.0)
     assert fills[0]["volume"] == 1.0  # never exceeds outstanding order volume
+
+
+def test_trade_volume_not_double_counted_across_multiple_orders():
+    """Verify that trade volume is conserved across multiple orders in one step.
+
+    When a single reported trade could satisfy multiple resting orders' trade-based
+    fill conditions, the trade volume should be shared (allocated) rather than
+    allowing each order to independently claim the full trade size.
+    """
+    sim = SnapshotExecutionSimulator(tick_size=0.01)
+    # Two bid orders at different prices, both satisfying trade_reached condition
+    orders = [
+        Order(side="bid", price=100.5, volume=3.0),
+        Order(side="bid", price=100.0, volume=3.0),
+    ]
+    # Single sell trade of size 4.0 that satisfies both orders
+    fills = sim.step(
+        orders,
+        next_best_bid=99.5,
+        next_best_ask=100.2,
+        next_trade_price=99.5,  # sell trade below both bid prices
+        next_trade_side="sell",
+        next_trade_size=4.0,  # total available trade volume
+    )
+
+    # Both orders should fill, but total should not exceed 4.0
+    assert len(fills) == 2
+    total_filled = sum(fill["volume"] for fill in fills)
+    assert total_filled == 4.0, f"Expected total fill of 4.0, got {total_filled}"
+    # First order in list should be prioritized: gets min(3.0, 4.0) = 3.0
+    assert fills[0]["volume"] == 3.0
+    # Second order gets remaining: min(3.0, 1.0) = 1.0
+    assert fills[1]["volume"] == 1.0

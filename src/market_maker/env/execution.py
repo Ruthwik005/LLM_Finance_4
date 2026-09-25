@@ -28,6 +28,9 @@ class SnapshotExecutionSimulator:
         next_trade_size: Optional[float],
     ) -> list[dict]:
         fills = []
+        # Track remaining trade volume to conserve it across multiple orders
+        remaining_trade_volume = next_trade_size if next_trade_size is not None else 0.0
+
         for order in outstanding_orders:
             fillable_volume = 0.0
 
@@ -41,7 +44,12 @@ class SnapshotExecutionSimulator:
                 if market_reached and not trade_reached:
                     fillable_volume = order.volume
                 elif trade_reached:
-                    fillable_volume = min(order.volume, next_trade_size or 0.0)
+                    # When both book-crossing and trade evidence justify a fill, trade evidence
+                    # takes precedence and caps the fill volume — this deliberately under-fills
+                    # relative to what book-crossing alone would justify, which is the safe
+                    # direction for this simulator's approximation.
+                    fillable_volume = min(order.volume, remaining_trade_volume)
+                    remaining_trade_volume -= fillable_volume
                 elif market_reached:
                     fillable_volume = order.volume
 
@@ -53,7 +61,12 @@ class SnapshotExecutionSimulator:
                     and next_trade_price >= order.price
                 )
                 if trade_reached:
-                    fillable_volume = min(order.volume, next_trade_size or 0.0)
+                    # When both book-crossing and trade evidence justify a fill, trade evidence
+                    # takes precedence and caps the fill volume — this deliberately under-fills
+                    # relative to what book-crossing alone would justify, which is the safe
+                    # direction for this simulator's approximation.
+                    fillable_volume = min(order.volume, remaining_trade_volume)
+                    remaining_trade_volume -= fillable_volume
                 elif market_reached:
                     fillable_volume = order.volume
 
