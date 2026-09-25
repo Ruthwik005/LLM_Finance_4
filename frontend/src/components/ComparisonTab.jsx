@@ -13,6 +13,7 @@ export default function ComparisonTab({ runId }) {
   if (!runId) return <p>Select a run to see its metrics.</p>;
   if (error) return <p>Not run / insufficient data</p>;
   if (!metrics) return <p>Loading…</p>;
+  if (Object.keys(metrics).length === 0) return <p>Not run / insufficient data</p>;
 
   return (
     <table>
