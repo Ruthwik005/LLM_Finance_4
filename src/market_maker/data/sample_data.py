@@ -5,7 +5,7 @@ import pandas as pd
 
 def generate_synthetic_lob(n_rows: int, depth: int, symbol: str, seed: int) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
-    timestamps = pd.date_range("2024-01-01", periods=n_rows, freq="500ms", tz="UTC")
+    timestamps = pd.date_range("2024-01-01", periods=n_rows, freq="5s", tz="UTC")
     mid = 100.0 + np.cumsum(rng.normal(0, 0.01, n_rows))
     data = {"timestamp": timestamps, "symbol": symbol}
     spread = 0.02
