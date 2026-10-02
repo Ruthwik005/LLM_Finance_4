@@ -12,14 +12,17 @@ class AccountState:
     filled_bid_volume: float
     filled_ask_volume: float
     turnover: float
+    rebates: float = 0.0
     _initial_wealth: float = field(default=None, repr=False)
 
     def __post_init__(self):
         if self._initial_wealth is None:
             self._initial_wealth = self.cash
 
-    def apply_fill(self, side: Literal["bid", "ask"], price: float, volume: float, fee_per_unit: float) -> None:
+    def apply_fill(self, side: Literal["bid", "ask"], price: float, volume: float, fee_per_unit: float,
+                   rebate_per_unit: float = 0.0) -> None:
         fee = fee_per_unit * volume
+        rebate = rebate_per_unit * volume
         if side == "bid":
             self.inventory += volume
             self.cash -= price * volume
@@ -29,7 +32,9 @@ class AccountState:
             self.cash += price * volume
             self.filled_ask_volume += volume
         self.cash -= fee
+        self.cash += rebate
         self.fees += fee
+        self.rebates += rebate
         self.turnover += price * volume
 
     def mark_to_market(self, midprice: float) -> float:

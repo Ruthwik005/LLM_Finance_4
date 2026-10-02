@@ -10,13 +10,27 @@ from market_maker.env.reward import compute_reward
 from market_maker.env.reference_price import compute_reference_price
 
 
+# Private-state layout appended to every observation: obs = [market_features | private_state].
+# Indices relative to the start of the private block (also obs[-6:]):
+#   0 inventory / max_inventory, clipped to [-1, 1]
+#   1 tanh(mark_to_market_pnl / pnl_scale)
+#   2 remaining episode fraction in [0, 1]  (1 at reset, 0 at the end)
+#   3 last quoted L1 bid distance from the reference price, in ticks / max_spread_ticks
+#   4 last quoted L1 ask distance from the reference price, in ticks / max_spread_ticks
+#   5 last quoted L1 spread (ask_l1 - bid_l1), in ticks / max_spread_ticks
+PRIVATE_STATE_DIM = 6
+PRIVATE_STATE_NAMES = ["inventory_frac", "mtm_pnl_tanh", "remaining_frac",
+                       "last_bid_distance_norm", "last_ask_distance_norm", "last_spread_norm"]
+
+
 class MarketMakingEnv(gym.Env):
     metadata = {"render_modes": []}
 
     def __init__(self, fused_features: np.ndarray, raw_lob_df: pd.DataFrame, feature_columns: list[str],
                  tick_size: float, levels_per_side: int, min_spread_ticks: int, max_spread_ticks: int,
                  max_mid_offset_ticks: int, total_volume_per_side: float, max_inventory: float,
-                 fee_per_unit: float, reward_config: dict, reference_price_mode: str, episode_length_steps: int):
+                 fee_per_unit: float, reward_config: dict, reference_price_mode: str, episode_length_steps: int,
+                 rebate_per_unit: float = 0.0, latency_steps: int = 0, pnl_scale: float = 50.0):
         super().__init__()
         self.fused_features = fused_features
         self.raw_lob_df = raw_lob_df.reset_index(drop=True)
@@ -31,14 +45,17 @@ class MarketMakingEnv(gym.Env):
         self.total_volume_per_side = total_volume_per_side
         self.max_inventory = max_inventory
         self.fee_per_unit = fee_per_unit
+        self.rebate_per_unit = rebate_per_unit
+        self.latency_steps = int(latency_steps)
+        self.pnl_scale = float(pnl_scale)
         self.reward_config = reward_config
         self.reference_price_mode = reference_price_mode
         self.episode_length_steps = episode_length_steps
 
-        self.execution_sim = SnapshotExecutionSimulator(tick_size=tick_size)
+        self.execution_sim = SnapshotExecutionSimulator(tick_size=tick_size, latency_steps=self.latency_steps)
 
         n_features = fused_features.shape[1]
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(n_features,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(n_features + PRIVATE_STATE_DIM,), dtype=np.float32)
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
 
         self._max_start = len(raw_lob_df) - episode_length_steps - 1
@@ -51,12 +68,21 @@ class MarketMakingEnv(gym.Env):
         self._data_idx = int(self._rng.integers(0, max(1, self._max_start)))
         self.account = AccountState(cash=0.0, inventory=0.0, realized_pnl=0.0, fees=0.0,
                                      filled_bid_volume=0.0, filled_ask_volume=0.0, turnover=0.0)
-        self._outstanding_orders: list[Order] = []
+        # Outstanding resting orders keyed by (side, level); value = (Order with remaining volume, placed_step)
+        self._outstanding_orders: dict[tuple[str, int], tuple[Order, int]] = {}
+        self._last_quote_norm = (0.0, 0.0, 0.0)
         obs = self._get_obs()
         return obs, {}
 
     def _get_obs(self) -> np.ndarray:
-        return self.fused_features[self._data_idx].astype(np.float32)
+        row = self._current_row()
+        ref = compute_reference_price(row["bid_price_1"], row["ask_price_1"], self.reference_price_mode)
+        inv_frac = float(np.clip(self.account.inventory / self.max_inventory, -1.0, 1.0)) if self.max_inventory else 0.0
+        mtm = float(np.tanh(self.account.mark_to_market(ref) / self.pnl_scale))
+        remaining = max(0.0, 1.0 - self._step_idx / self.episode_length_steps)
+        bd, ad, sp = self._last_quote_norm
+        private = np.array([inv_frac, mtm, remaining, bd, ad, sp], dtype=np.float32)
+        return np.concatenate([self.fused_features[self._data_idx].astype(np.float32), private])
 
     def _current_row(self):
         return self.raw_lob_df.iloc[self._data_idx]
@@ -97,27 +123,63 @@ class MarketMakingEnv(gym.Env):
         ask_vol_l1 = min(ask_vol_l1, remaining_short)
         ask_vol_l2 = min(ask_vol_l2, max(0.0, remaining_short - ask_vol_l1))
 
-        new_orders = [
-            Order(side="bid", price=bid_price_l1, volume=bid_vol_l1),
-            Order(side="bid", price=bid_price_l2, volume=bid_vol_l2),
-            Order(side="ask", price=ask_price_l1, volume=ask_vol_l1),
-            Order(side="ask", price=ask_price_l2, volume=ask_vol_l2),
-        ]
-        canceled_volume = sum(o.volume for o in self._outstanding_orders)
-        self._outstanding_orders = [o for o in new_orders if o.volume > 0]
+        desired = {
+            ("bid", 0): Order(side="bid", price=bid_price_l1, volume=bid_vol_l1),
+            ("bid", 1): Order(side="bid", price=bid_price_l2, volume=bid_vol_l2),
+            ("ask", 0): Order(side="ask", price=ask_price_l1, volume=ask_vol_l1),
+            ("ask", 1): Order(side="ask", price=ask_price_l2, volume=ask_vol_l2),
+        }
+        # Quote persistence (spec 15.2): unchanged price keeps its remaining volume (and queue/latency state);
+        # a changed price or a reduced volume cancels the old remaining volume and places the new volume.
+        placed_volume = 0.0
+        canceled_volume = 0.0
+        reconciled: dict[tuple[str, int], tuple[Order, int]] = {}
+        for key, new in desired.items():
+            old = self._outstanding_orders.get(key)
+            if old is not None:
+                old_order, old_step = old
+                if abs(old_order.price - new.price) < 1e-12 and new.volume >= old_order.volume - 1e-12:
+                    if old_order.volume > 0:
+                        reconciled[key] = (old_order, old_step)
+                    continue
+                canceled_volume += old_order.volume
+            if new.volume > 0:
+                placed_volume += new.volume
+                reconciled[key] = (Order(side=new.side, price=new.price, volume=new.volume), self._step_idx)
+        self._outstanding_orders = reconciled
+        # Quoted state for the log: prices always shown, volumes = outstanding remaining volume (0 if none)
+        quoted_volumes = {k: (reconciled[k][0].volume if k in reconciled else 0.0) for k in desired}
+
+        if bid_vol_l1 > 0 or bid_vol_l2 > 0 or ask_vol_l1 > 0 or ask_vol_l2 > 0:
+            self._last_quote_norm = (
+                float(np.clip((ref_price - bid_price_l1) / self.tick_size / self.max_spread_ticks, -1.0, 1.0)),
+                float(np.clip((ask_price_l1 - ref_price) / self.tick_size / self.max_spread_ticks, -1.0, 1.0)),
+                float(np.clip((ask_price_l1 - bid_price_l1) / self.tick_size / self.max_spread_ticks, 0.0, 1.0)),
+            )
 
         next_idx = min(self._data_idx + 1, len(self.raw_lob_df) - 1)
         next_row = self.raw_lob_df.iloc[next_idx]
+        eligible_keys = [k for k, (_, placed_step) in self._outstanding_orders.items()
+                         if self._step_idx >= placed_step + self.latency_steps]
+        eligible = [self._outstanding_orders[k][0] for k in eligible_keys]
         fills = self.execution_sim.step(
-            self._outstanding_orders,
+            eligible,
             next_best_bid=next_row["bid_price_1"], next_best_ask=next_row["ask_price_1"],
             next_trade_price=next_row.get("trade_price"), next_trade_side=next_row.get("trade_side"),
             next_trade_size=next_row.get("trade_size"),
         )
-        for fill in fills:
-            self.account.apply_fill(fill["side"], fill["price"], fill["volume"], self.fee_per_unit)
-
         next_ref_price = compute_reference_price(next_row["bid_price_1"], next_row["ask_price_1"], self.reference_price_mode)
+        fills = [dict(f, mid=float(next_ref_price)) for f in fills]
+        for fill in fills:
+            self.account.apply_fill(fill["side"], fill["price"], fill["volume"], self.fee_per_unit,
+                                    self.rebate_per_unit)
+            # partial fills reduce the resting remainder; the unfilled remainder persists
+            for k in eligible_keys:
+                o = self._outstanding_orders[k][0]
+                if o.side == fill["side"] and abs(o.price - fill["price"]) < 1e-12:
+                    o.volume -= fill["volume"]
+                    break
+        self._outstanding_orders = {k: v for k, v in self._outstanding_orders.items() if v[0].volume > 1e-12}
         new_mtm = self.account.mark_to_market(next_ref_price)
         delta_mtm = new_mtm - prev_mtm
 
@@ -134,8 +196,27 @@ class MarketMakingEnv(gym.Env):
         truncated = self._step_idx >= self.episode_length_steps or self._data_idx >= len(self.raw_lob_df) - 1
 
         obs = self._get_obs()
-        info = {"fills": fills, "canceled_volume": canceled_volume, "inventory": self.account.inventory,
-                "cash": self.account.cash, "reward_components": components}
+        ts = row.get("timestamp") if hasattr(row, "get") else None
+        step_log = {
+            "t": self._step_idx - 1,
+            "timestamp": None if ts is None else pd.Timestamp(ts).isoformat(),
+            "mid": float(ref_price),
+            "next_mid": float(next_ref_price),
+            "bid_prices": [float(bid_price_l1), float(bid_price_l2)],
+            "ask_prices": [float(ask_price_l1), float(ask_price_l2)],
+            "bid_volumes": [float(quoted_volumes[("bid", 0)]), float(quoted_volumes[("bid", 1)])],
+            "ask_volumes": [float(quoted_volumes[("ask", 0)]), float(quoted_volumes[("ask", 1)])],
+            "inventory": float(self.account.inventory),
+            "cash": float(self.account.cash),
+            "mtm_pnl": float(new_mtm),
+            "fills": [dict(f) for f in fills],
+            "placed_volume": float(placed_volume),
+            "canceled_volume": float(canceled_volume),
+        }
+        info = {"fills": fills, "canceled_volume": canceled_volume, "placed_volume": placed_volume,
+                "inventory": self.account.inventory, "cash": self.account.cash,
+                "fees_paid": self.account.fees, "rebates_received": self.account.rebates,
+                "reward_components": components, "step_log": step_log}
         return obs, float(reward), terminated, truncated, info
 
     def _round_to_tick(self, price: float) -> float:

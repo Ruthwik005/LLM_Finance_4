@@ -24,7 +24,8 @@ def build_env_for_split(cfg, split_df):
         min_spread_ticks=cfg.simulator.min_spread_ticks, max_spread_ticks=cfg.simulator.max_spread_ticks,
         max_mid_offset_ticks=cfg.simulator.max_mid_offset_ticks,
         total_volume_per_side=cfg.simulator.total_volume_per_side, max_inventory=cfg.simulator.max_inventory,
-        fee_per_unit=cfg.simulator.fee_per_unit,
+        fee_per_unit=cfg.simulator.fee_per_unit, rebate_per_unit=cfg.simulator.rebate_per_unit,
+        latency_steps=cfg.simulator.latency_steps, pnl_scale=cfg.simulator.pnl_scale,
         reward_config=cfg.reward.model_dump(), reference_price_mode=cfg.simulator.reference_price_mode,
         episode_length_steps=episode_steps,
     )

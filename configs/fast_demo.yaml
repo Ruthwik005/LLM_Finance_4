@@ -42,6 +42,8 @@ simulator:
   max_inventory: 100
   latency_steps: 0
   fee_per_unit: 0.0
+  rebate_per_unit: 0.0
+  pnl_scale: 50.0
 reward:
   type: truncated_inventory
   inventory_threshold: 40
@@ -65,3 +67,10 @@ experiments:
   run_lob_sentiment: true
   run_full: true
   run_td3: false
+evaluation:
+  adverse_horizon_steps: 10
+  adverse_threshold_ticks: 1.0
+baselines:
+  gamma: 0.1
+  kappa: 100.0
+  volatility_window: 20

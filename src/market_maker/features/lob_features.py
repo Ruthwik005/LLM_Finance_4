@@ -4,7 +4,7 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
 
-def compute_lob_features(df: pd.DataFrame, depth: int, return_lags: list[int]) -> pd.DataFrame:
+def compute_lob_features(df: pd.DataFrame, depth: int, return_lags: list[int], vol_window: int = 20) -> pd.DataFrame:
     df = df.sort_values("timestamp").reset_index(drop=True)
     feats = pd.DataFrame(index=df.index)
 
@@ -32,7 +32,7 @@ def compute_lob_features(df: pd.DataFrame, depth: int, return_lags: list[int]) -
     for lag in return_lags:
         feats[f"return_lag_{lag}"] = feats["midprice"].pct_change(lag).fillna(0.0)
 
-    feats["rolling_vol"] = feats["midprice"].pct_change().rolling(20, min_periods=1).std().fillna(0.0)
+    feats["rolling_vol"] = feats["midprice"].pct_change().rolling(vol_window, min_periods=1).std().fillna(0.0)
 
     if "trade_size" in df.columns:
         feats["rolling_traded_volume"] = df["trade_size"].fillna(0.0).rolling(20, min_periods=1).sum()

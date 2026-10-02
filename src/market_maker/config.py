@@ -59,6 +59,8 @@ class SimulatorConfig(BaseModel):
     max_inventory: float = 100
     latency_steps: int = 0
     fee_per_unit: float = 0.0
+    rebate_per_unit: float = 0.0
+    pnl_scale: float = 50.0  # tanh scale for the mark-to-market PnL entry of the observation
 
 
 class RewardConfig(BaseModel):
@@ -81,6 +83,17 @@ class SacConfig(BaseModel):
     ent_coef: str = "auto"
 
 
+class EvaluationConfig(BaseModel):
+    adverse_horizon_steps: int = 10
+    adverse_threshold_ticks: float = 1.0
+
+
+class BaselinesConfig(BaseModel):
+    gamma: float = 0.1  # Avellaneda-Stoikov risk aversion
+    kappa: float = 100.0  # arrival-intensity decay per price unit; spread term ~ 2/kappa
+    volatility_window: int = 20  # rolling window (snapshots) of the rolling_vol feature
+
+
 class ExperimentsConfig(BaseModel):
     run_heuristic: bool = True
     run_lob_only: bool = True
@@ -99,6 +112,8 @@ class AppConfig(BaseModel):
     reward: RewardConfig
     sac: SacConfig
     experiments: ExperimentsConfig
+    evaluation: EvaluationConfig = EvaluationConfig()
+    baselines: BaselinesConfig = BaselinesConfig()
 
 
 def load_config(path: str) -> AppConfig:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 from datetime import datetime, timezone
-from sqlalchemy import String, Integer, Float, DateTime, ForeignKey
+from sqlalchemy import String, Integer, Float, DateTime, ForeignKey, Index
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -46,3 +46,28 @@ class Fill(Base):
     side: Mapped[str] = mapped_column(String)
     price: Mapped[float] = mapped_column(Float)
     volume: Mapped[float] = mapped_column(Float)
+
+
+class Step(Base):
+    __tablename__ = "steps"
+    __table_args__ = (Index("ix_steps_run_episode", "run_id", "episode"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String, ForeignKey("runs.run_id"))
+    episode: Mapped[int] = mapped_column(Integer)
+    step: Mapped[int] = mapped_column(Integer)
+    timestamp: Mapped[str | None] = mapped_column(String, nullable=True)
+    mid: Mapped[float] = mapped_column(Float)
+    bid_1: Mapped[float] = mapped_column(Float)
+    bid_2: Mapped[float] = mapped_column(Float)
+    ask_1: Mapped[float] = mapped_column(Float)
+    ask_2: Mapped[float] = mapped_column(Float)
+    bid_vol_1: Mapped[float] = mapped_column(Float)
+    bid_vol_2: Mapped[float] = mapped_column(Float)
+    ask_vol_1: Mapped[float] = mapped_column(Float)
+    ask_vol_2: Mapped[float] = mapped_column(Float)
+    inventory: Mapped[float] = mapped_column(Float)
+    cash: Mapped[float] = mapped_column(Float)
+    mtm_pnl: Mapped[float] = mapped_column(Float)
+    placed_volume: Mapped[float] = mapped_column(Float)
+    canceled_volume: Mapped[float] = mapped_column(Float)
