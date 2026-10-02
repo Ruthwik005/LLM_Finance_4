@@ -51,6 +51,8 @@ class TransformerConfig(BaseModel):
     window_stride: int = 1  # stride between consecutive training/validation windows (rows)
     class_weights: bool = False  # weight CE by inverse train label frequency (flat class usually dominates)
     embed_batch_size: int = 1024  # batch size when exporting embeddings for every row
+    # A label is IGNORE when the row found for ts+h lies later than ts + h * label_max_gap_factor (session gaps).
+    label_max_gap_factor: float = 1.5
 
 
 class FeaturesConfig(BaseModel):
@@ -58,6 +60,11 @@ class FeaturesConfig(BaseModel):
     return_lags: list[int] = [1, 5]
     clip_value: float = 10.0  # standardized features are clipped to +-clip_value
     label_threshold_bps: float = 5.0  # Transformer up/down label threshold (basis points of mid price)
+    price_ma_window: int = 100  # window (snapshots) of the scale-free mid_vs_ma feature: mid / rolling_mean(mid) - 1
+    volume_window: int = 20  # window (snapshots) of rolling_traded_volume
+    # Absolute-level columns kept in the LOB frame (labels/backtests) but NOT fed to models.
+    exclude_model_columns: list[str] = ["midprice", "microprice"]
+    max_clipped_fraction: float = 0.01  # warn when more than this fraction of a column is clipped at +-clip_value
 
 
 class SimulatorConfig(BaseModel):

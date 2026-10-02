@@ -33,7 +33,7 @@ class BestCheckpointTracker:
         return False
 
 
-def evaluate_on_windows(model, env, starts: list[int], max_inventory: float | None = None) -> dict:
+def evaluate_on_windows(model, env, starts: list[int]) -> dict:
     """Deterministic rollouts of `model` on fixed start windows. Returns mean episode reward / PnL / MAP."""
     rewards, pnls, maps = [], [], []
     for i, s in enumerate(starts):
@@ -133,9 +133,13 @@ class SacTrainResult:
     curve: list = field(default_factory=list)
 
 
+def make_validation_eval_fn(val_env, val_starts: list[int]):
+    """eval_fn used for checkpoint selection: always scores the policy on the VALIDATION env/windows."""
+    return lambda m: evaluate_on_windows(m, val_env, val_starts)
+
+
 def train_sac_agent(train_env, val_env, sac_cfg, *, seed: int, out_dir: str, val_starts: list[int],
-                    total_timesteps: int | None = None, eval_freq: int | None = None,
-                    max_inventory: float | None = None) -> SacTrainResult:
+                    total_timesteps: int | None = None, eval_freq: int | None = None) -> SacTrainResult:
     """Train SAC on `train_env` (Monitor-wrapped here); every `eval_freq` steps score the policy on fixed
     validation windows and keep `best_model.zip`; `last_model.zip` is saved at the end. All hyperparameters come
     from `sac_cfg` (config.SacConfig). Fully seeded (global seeds, SAC seed, seeded env start sampler)."""
@@ -151,13 +155,13 @@ def train_sac_agent(train_env, val_env, sac_cfg, *, seed: int, out_dir: str, val
     capture = _CaptureWriter()
     model.set_logger(Logger(folder=None, output_formats=[capture]))
     cb = ValidationCheckpointCallback(
-        lambda m: evaluate_on_windows(m, val_env, val_starts, max_inventory), eval_freq or sac_cfg.eval_freq,
+        make_validation_eval_fn(val_env, val_starts), eval_freq or sac_cfg.eval_freq,
         out_dir, capture=capture, checkpoint_freq=sac_cfg.checkpoint_freq)
     model.learn(total_timesteps=total, callback=cb, progress_bar=False)
     last = os.path.join(out_dir, "last_model.zip")
     model.save(last)
-    if not os.path.exists(os.path.join(out_dir, "best_model.zip")):  # no finite validation score ever: fall back
-        model.save(os.path.join(out_dir, "best_model"))
+    if cb.tracker.best_step is None:  # no finite validation score ever: fall back to the last model. This always
+        model.save(os.path.join(out_dir, "best_model"))  # overwrites, so a stale best_model.zip never survives
     return SacTrainResult(best_model_path=os.path.join(out_dir, "best_model.zip"), last_model_path=last,
                           curve_path=os.path.join(out_dir, "training_curve.csv"), best_step=cb.tracker.best_step,
                           best_val_reward=cb.tracker.best_score, curve=cb.rows)

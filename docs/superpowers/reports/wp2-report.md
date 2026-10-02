@@ -116,3 +116,36 @@ experiments:   python scripts/run_experiments.py --config $(CONFIG) --experiment
 experiments-dry: python scripts/run_experiments.py --config $(CONFIG) --dry-run
 smoke-experiments: build_features --stub-sentiment, train_transformer, build_features --stage fusion, run_experiments --fast (temp --artifacts-root)
 ```
+
+## Review fixes
+- **C1 resume**: run ids/folders unchanged (latest wins). Each run's metadata.json now carries `experiment_id, fast_mode,
+  total_timesteps, eval_freq, n_test_windows, test_windows, seed, variant, config_hash, feature_hash`. `--resume` skips a run
+  only if metrics.json + metadata.json (+ `best_model.zip` for SAC) exist and all of those match (`check_run_completed`);
+  otherwise it retrains and logs why. Without `--resume` everything retrains/overwrites (documented in `--help` and the
+  module docstring). `--fast` defaults the experiment id to `<id>_fast` (explicit `--experiment-id` still wins), so smoke
+  summaries do not overwrite real ones.
+- **I1 feature cache**: `feature_meta.json` stores `lob_hash` (features config, split, depth, LOB sha) and
+  `sentiment.hash` (sentiment config, news sha, sentiment cache sha); each `<variant>_columns.json` stores `feature_hash`
+  (+ Transformer config subset and checkpoint sha). `ensure_features` reuses on match, rebuilds variant-level staleness
+  automatically, and raises a clear error for stale BASE features unless `force=True` (`run_experiments.py --force-features`),
+  because a base rebuild invalidates the Transformer. FORMAT CHANGE: `<variant>_columns.json` is now
+  `{"columns": [...], "feature_hash": ...}`; use `pipeline.load_columns()` (legacy plain lists still load).
+- **I2 level-free inputs**: `midprice` and `microprice` stay in the LOB frame (labels/backtests) but are excluded from model
+  inputs via `model_feature_columns` / `features.exclude_model_columns`; new inputs `mid_vs_ma` (mid / rolling mean over
+  `features.price_ma_window` - 1) and `microprice_offset`. `meta.lob_feature_columns` is now the model column list
+  (`midprice_index` removed). Avellaneda-Stoikov no longer reads features: `predict(obs, inventory, max_inventory, mid=)`
+  with the true raw mid supplied by `run_backtest` (it passes `mid=` only to agents whose `predict` accepts it, and calls
+  `agent.reset()` per episode); AS keeps its own rolling mid window (`baselines.volatility_window`). Its constructor no
+  longer takes feature indices/mean/scale (scripts updated). Clip fractions per split/column are stored in
+  `feature_meta.json` (`clip_fractions`, `extras_clip_fractions`) and a warning is logged above `features.max_clipped_fraction` (1%).
+- **I3 memory**: embedding/prob/sentiment blocks stay float32 and are standardized in place per split in chunks (float64 only
+  per chunk); variant arrays are written straight into `np.lib.format.open_memmap` (no DataFrames). Output is bit-identical to the
+  `build_fused_dataset` path (tested).
+- **I4**: labels are IGNORE when the target row is later than `h * transformer.label_max_gap_factor` (default 1.5) after ts[i].
+- **Minor**: fallback saves `best_model.zip` unconditionally; `max_inventory` arg removed from `evaluate_on_windows` /
+  `train_sac_agent`; `features.volume_window` drives `rolling_traded_volume`; dead line removed; test that checkpoint selection
+  uses the VALIDATION env. `extras_scaler.json` now merges with previously built groups instead of dropping them.
+- Tests: 162 pass (~22 s). Intentionally changed: AS tests (new constructor/`mid=`), `test_scaler_fit_on_train_only` (uses
+  `mid_vs_ma`; test-split mean check relaxed to `> 0`), columns.json readers. New: `tests/test_wp2_review.py`.
+- Smoke in temp dirs (100k synthetic rows): base 1.7 s, Transformer 2.6 s, fusion 2.3 s, `run_experiments --fast` 2 variants x 2 seeds 10.9 s,
+  `--resume` rerun 1.5 s (all 6 runs skipped).

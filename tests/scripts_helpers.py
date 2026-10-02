@@ -18,7 +18,8 @@ def train_tiny_transformer(cfg, art):
         lob = pd.read_parquet(lob_split_path(art, split), columns=["timestamp", "bid_price_1", "ask_price_1"])
         mid = ((lob["bid_price_1"] + lob["ask_price_1"]) / 2).to_numpy()
         return WindowDataset(X, lob["timestamp"], mid, t.sequence_length, t.horizons_minutes,
-                             cfg.features.label_threshold_bps, stride=t.window_stride)
+                             cfg.features.label_threshold_bps, stride=t.window_stride,
+                         max_gap_factor=t.label_max_gap_factor)
 
     set_global_seed(0)
     kw = dict(input_dim=len(meta["lob_feature_columns"]), d_model=t.d_model, nhead=t.nhead, num_layers=t.num_layers,

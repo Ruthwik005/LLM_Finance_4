@@ -7,7 +7,7 @@ import torch
 
 from market_maker.data.sample_data import generate_synthetic_lob
 from market_maker.features.lob_features import compute_lob_features
-from market_maker.features.pipeline import (SPLITS, SAC_VARIANTS, base_features_path, columns_path, load_meta,
+from market_maker.features.pipeline import (load_columns, SPLITS, SAC_VARIANTS, base_features_path, columns_path, load_meta,
                                              lob_split_path, transformer_checkpoint_path, variant_path)
 from market_maker.features.temporal_dataset import (IGNORE_LABEL, WindowDataset, build_windows,
                                                      compute_horizon_labels)
@@ -59,9 +59,10 @@ def test_scaler_fit_on_train_only(wp2_built):
     assert not np.allclose(meta["feature_mean"], feats[cols].to_numpy().mean(axis=0), rtol=1e-6)
     # train block is standardized by its own stats (mean ~0 unless clipped), other splits are not
     tr = np.load(base_features_path(art, "train"))
-    j = cols.index("midprice")
+    assert "midprice" not in cols and "microprice" not in cols and "mid_vs_ma" in cols  # level-free inputs only
+    j = cols.index("mid_vs_ma")
     assert abs(tr[:, j].mean()) < 0.05
-    assert abs(np.load(base_features_path(art, "test"))[:, j].mean()) > 0.01
+    assert abs(np.load(base_features_path(art, "test"))[:, j].mean()) > 0.0
 
 
 def test_variant_artifacts_composition_finite_clipped(wp2_built):
@@ -74,7 +75,7 @@ def test_variant_artifacts_composition_finite_clipped(wp2_built):
     expected = {"SAC_LOB_ONLY": n_lob, "SAC_LOB_SENTIMENT": n_lob + len(sent),
                 "SAC_LOB_TRANSFORMER": n_lob + d + n_probs + 1, "SAC_FULL": n_lob + len(sent) + d + n_probs + 1}
     for v in SAC_VARIANTS:
-        cols = json.load(open(columns_path(art, v)))
+        cols = load_columns(art, v)
         assert cols[:n_lob] == meta["lob_feature_columns"]  # LOB block identical -> AS indices valid everywhere
         assert len(cols) == expected[v]
         assert ("transformer_signal_valid" in cols) == (v in ("SAC_LOB_TRANSFORMER", "SAC_FULL"))
@@ -90,7 +91,7 @@ def test_extras_standardized_with_train_stats(wp2_built):
     cfg, art = wp2_built
     sc = json.load(open(os.path.join(art, "features", "extras_scaler.json")))
     assert sc["sentiment"]["fit"] == "train only" and sc["transformer"]["fit"] == "train only"
-    cols = json.load(open(columns_path(art, "SAC_FULL")))
+    cols = load_columns(art, "SAC_FULL")
     a = np.load(variant_path(art, "SAC_FULL", "train"))
     j = cols.index("transformer_embed_0")
     assert abs(a[:, j].mean()) < 0.1 and abs(a[:, j].std() - 1) < 0.2

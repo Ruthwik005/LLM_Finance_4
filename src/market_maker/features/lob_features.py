@@ -4,7 +4,20 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
 
-def compute_lob_features(df: pd.DataFrame, depth: int, return_lags: list[int], vol_window: int = 20) -> pd.DataFrame:
+DEFAULT_EXCLUDED_MODEL_COLUMNS = ("midprice", "microprice")
+
+
+def model_feature_columns(columns, exclude=DEFAULT_EXCLUDED_MODEL_COLUMNS) -> list[str]:
+    """Columns of the LOB feature frame that may be fed to models (RL / Transformer): everything except the
+    timestamp and the absolute price LEVEL columns (`exclude`, config ``features.exclude_model_columns``).
+    Those stay in the frame for labels / backtests; scale-free replacements (`mid_vs_ma`, `microprice_offset`)
+    are model inputs instead."""
+    ex = set(exclude) | {"timestamp"}
+    return [c for c in columns if c not in ex]
+
+
+def compute_lob_features(df: pd.DataFrame, depth: int, return_lags: list[int], vol_window: int = 20,
+                         price_ma_window: int = 100, volume_window: int = 20) -> pd.DataFrame:
     df = df.sort_values("timestamp", kind="stable").reset_index(drop=True)
     feats = pd.DataFrame(index=df.index)
 
@@ -16,6 +29,9 @@ def compute_lob_features(df: pd.DataFrame, depth: int, return_lags: list[int], v
     feats["imbalance_l1"] = (bid_sz1 - ask_sz1) / (bid_sz1 + ask_sz1 + 1e-9)
     denom = bid_sz1 + ask_sz1 + 1e-9
     feats["microprice"] = (df["bid_price_1"] * ask_sz1 + df["ask_price_1"] * bid_sz1) / denom
+    feats["microprice_offset"] = feats["microprice"] - feats["midprice"]  # level-free
+    # scale-free, backward-looking replacement of the absolute price level
+    feats["mid_vs_ma"] = feats["midprice"] / feats["midprice"].rolling(price_ma_window, min_periods=1).mean() - 1.0
 
     cum_bid, cum_ask = 0.0, 0.0
     for level in range(1, depth + 1):
@@ -35,7 +51,7 @@ def compute_lob_features(df: pd.DataFrame, depth: int, return_lags: list[int], v
     feats["rolling_vol"] = feats["midprice"].pct_change().rolling(vol_window, min_periods=1).std().fillna(0.0)
 
     if "trade_size" in df.columns:
-        feats["rolling_traded_volume"] = df["trade_size"].fillna(0.0).rolling(20, min_periods=1).sum()
+        feats["rolling_traded_volume"] = df["trade_size"].fillna(0.0).rolling(volume_window, min_periods=1).sum()
     else:
         feats["rolling_traded_volume"] = 0.0
 

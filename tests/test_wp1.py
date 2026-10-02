@@ -192,21 +192,30 @@ def test_zero_fill_and_zero_map_edge_cases():
 
 # ---------------- Avellaneda-Stoikov ----------------
 def _as(**kw):
-    a = dict(gamma=0.1, kappa=1.5, rolling_vol_index=1, midprice_index=0, tick_size=0.01, min_spread_ticks=1,
-             max_spread_ticks=8, max_mid_offset_ticks=4, episode_length_steps=100)
+    a = dict(gamma=0.1, kappa=1.5, tick_size=0.01, min_spread_ticks=1,
+             max_spread_ticks=8, max_mid_offset_ticks=4, episode_length_steps=100, vol_window=10)
     a.update(kw)
     return AvellanedaStoikovMarketMaker(**a)
 
 
-def _obs(vol=0.0005, remaining=1.0):
-    return np.array([100.0, vol] + [0, 0, remaining, 0, 0, 0], dtype=np.float32)
+def _obs(remaining=1.0):
+    # standardized/clipped model features are irrelevant to AS now: garbage must not change the result
+    return np.array([9.99, -9.99] + [0, 0, remaining, 0, 0, 0], dtype=np.float32)
+
+
+def _warm(agent, n=12, step=0.05):
+    mids = 100.0 + step * np.sin(np.arange(n))
+    for m in mids[:-1]:
+        agent.predict(_obs(), 0.0, 100.0, mid=float(m))
+    return float(mids[-1])
 
 
 def test_as_valid_actions_and_skews_against_inventory():
     agent = _as(gamma=1.0)
-    flat = agent.predict(_obs(), inventory=0.0, max_inventory=100.0)
-    long_ = agent.predict(_obs(), inventory=50.0, max_inventory=100.0)
-    short = agent.predict(_obs(), inventory=-50.0, max_inventory=100.0)
+    mid = _warm(agent)
+    flat = agent.predict(_obs(), inventory=0.0, max_inventory=100.0, mid=mid)
+    long_ = agent.predict(_obs(), inventory=50.0, max_inventory=100.0, mid=mid)
+    short = agent.predict(_obs(), inventory=-50.0, max_inventory=100.0, mid=mid)
     for a in (flat, long_, short):
         assert a.shape == (4,) and np.all(np.abs(a) <= 1.0)
     assert flat[0] == 0.0
@@ -215,7 +224,50 @@ def test_as_valid_actions_and_skews_against_inventory():
 
 
 def test_as_no_skew_at_horizon_end():
-    assert _as(gamma=1.0).predict(_obs(remaining=0.0), 50.0, 100.0)[0] == 0.0
+    agent = _as(gamma=1.0)
+    mid = _warm(agent)
+    assert agent.predict(_obs(remaining=0.0), 50.0, 100.0, mid=mid)[0] == 0.0
+
+
+def test_as_uses_true_mid_and_own_vol_window_not_features():
+    a1, a2 = _as(gamma=1.0), _as(gamma=1.0)
+    mid = _warm(a1)
+    _warm(a2)
+    o2 = _obs()
+    o2[:2] = [-3.0, 4.0]  # different (standardized) features -> identical action
+    np.testing.assert_array_equal(a1.predict(_obs(), 50.0, 100.0, mid=mid), a2.predict(o2, 50.0, 100.0, mid=mid))
+    with pytest.raises(ValueError):
+        _as().predict(_obs(), 0.0, 100.0)  # no mid -> error, never recovered from features
+    # volatility estimated from the mids it was given: constant mids -> zero risk term -> zero skew
+    flat = _as(gamma=1.0)
+    for _ in range(12):
+        act = flat.predict(_obs(), 50.0, 100.0, mid=100.0)
+    assert act[0] == 0.0
+    # window is bounded and reset() clears it
+    assert len(a1._mids) <= a1.vol_window + 1
+    a1.reset()
+    assert len(a1._mids) == 0
+
+
+def test_run_backtest_passes_true_mid_to_agents_that_accept_it():
+    from test_backtest import _make_env  # noqa
+    env = _make_env()
+    seen = []
+
+    class Spy:
+        def reset(self):
+            seen.append("reset")
+
+        def predict(self, obs, inventory, max_inventory, mid=None):
+            seen.append(mid)
+            return np.zeros(4, dtype=np.float32)
+
+    run_backtest(env, Spy(), n_episodes=1, is_heuristic=True, max_inventory=100.0, start_indices=[5])
+    raw = (env.raw_lob_df["bid_price_1"] + env.raw_lob_df["ask_price_1"]) / 2
+    assert seen[0] == "reset"
+    np.testing.assert_allclose(seen[1:], raw.iloc[5:5 + len(seen) - 1].to_numpy())  # raw mids, row by row
+    # heuristic path unchanged (no mid kwarg)
+    run_backtest(env, HeuristicMarketMaker(), 1, True, 100.0)
 
 
 # ---------------- artifacts / DB ----------------

@@ -2,14 +2,20 @@ from __future__ import annotations
 import json
 import os
 import csv
+import inspect
 import yaml
 import numpy as np
+
+from market_maker.env.reference_price import compute_reference_price
 
 
 def run_backtest(env, agent, n_episodes: int, is_heuristic: bool, max_inventory: float,
                  start_indices: list[int] | None = None) -> dict:
     """Run n_episodes. ``is_heuristic=True`` means the agent exposes
-    ``predict(obs, inventory=, max_inventory=)`` (heuristic and Avellaneda-Stoikov); otherwise SB3 ``predict``."""
+    ``predict(obs, inventory=, max_inventory=)`` (heuristic and Avellaneda-Stoikov); otherwise SB3 ``predict``.
+    If that ``predict`` also accepts ``mid`` it is given the TRUE mid price of the current row (from the raw LOB,
+    not from the standardized features), and ``agent.reset()`` is called at every episode start when it exists."""
+    wants_mid = is_heuristic and "mid" in inspect.signature(agent.predict).parameters
     episode_pnls, inventories, all_fills, all_orders, all_steps = [], [], [], [], []
     if start_indices is not None:
         n_episodes = len(start_indices)  # fixed evaluation windows (deterministic, identical across agents)
@@ -18,17 +24,25 @@ def run_backtest(env, agent, n_episodes: int, is_heuristic: bool, max_inventory:
         reset_opts = {"start_index": int(start_indices[ep])} if start_indices is not None else None
         obs, _ = env.reset(seed=1000 + ep, options=reset_opts)
         done = False
+        if hasattr(agent, "reset") and is_heuristic:
+            agent.reset()
+        if wants_mid:
+            row = env._current_row()
+            mid = float(compute_reference_price(row["bid_price_1"], row["ask_price_1"], env.reference_price_mode))
         inventory_trace, ep_fills, ep_steps, ep_orders = [], [], [], []
         cumulative_pnl = 0.0
         while not done:
             if is_heuristic:
-                action = agent.predict(obs, inventory=env.account.inventory, max_inventory=max_inventory)
+                kw = {"mid": mid} if wants_mid else {}
+                action = agent.predict(obs, inventory=env.account.inventory, max_inventory=max_inventory, **kw)
             else:
                 action, _ = agent.predict(obs, deterministic=True)
             obs, reward, terminated, truncated, info = env.step(action)
             inventory_trace.append(info["inventory"])
-            ep_fills.extend(info["fills"])
             log = info["step_log"]
+            if wants_mid:
+                mid = float(log["next_mid"])  # mid of the row the next observation refers to
+            ep_fills.extend(dict(f, step=log["t"]) for f in info["fills"])
             ep_steps.append(log)
             ep_orders.append({"t": log["t"], "placed_volume": log["placed_volume"],
                               "canceled_volume": log["canceled_volume"],

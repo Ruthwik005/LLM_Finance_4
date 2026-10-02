@@ -25,7 +25,8 @@ def _dataset(cfg, artifacts_dir, split):
     mid = ((lob["bid_price_1"] + lob["ask_price_1"]) / 2).to_numpy()
     t = cfg.transformer
     return WindowDataset(X, lob["timestamp"], mid, t.sequence_length, t.horizons_minutes,
-                         cfg.features.label_threshold_bps, stride=t.window_stride)
+                         cfg.features.label_threshold_bps, stride=t.window_stride,
+                         max_gap_factor=t.label_max_gap_factor)
 
 
 def main() -> None:

@@ -54,13 +54,11 @@ def main() -> None:
         agent, heur = SAC.load(model_path, device=cfg.sac.device), False
         run_id = args.run_id or f"{variant.lower()}_seed{seed}"
     elif variant == "AVELLANEDA_STOIKOV":
-        meta = load_meta(args.artifacts_root)
         agent, heur, model_path = AvellanedaStoikovMarketMaker(
-            gamma=cfg.baselines.gamma, kappa=cfg.baselines.kappa, rolling_vol_index=meta["rolling_vol_index"],
-            midprice_index=meta["midprice_index"], tick_size=cfg.data.tick_size,
+            gamma=cfg.baselines.gamma, kappa=cfg.baselines.kappa, tick_size=cfg.data.tick_size,
             min_spread_ticks=cfg.simulator.min_spread_ticks, max_spread_ticks=cfg.simulator.max_spread_ticks,
             max_mid_offset_ticks=cfg.simulator.max_mid_offset_ticks, episode_length_steps=L,
-            feature_mean=meta["feature_mean"], feature_scale=meta["feature_scale"]), True, "N/A"
+            vol_window=cfg.baselines.volatility_window), True, "N/A"
         run_id = args.run_id or "avellaneda_stoikov"
     elif variant == "HEURISTIC":
         agent, heur, model_path = HeuristicMarketMaker(), True, "N/A"

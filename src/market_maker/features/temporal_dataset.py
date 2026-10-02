@@ -33,8 +33,6 @@ def build_windows(
     for end in range(sequence_length, n):
         window_start = end - sequence_length
         t_end = timestamps[end - 1]
-        if (t_end - timestamps[-1]).astype("int64") if False else False:
-            pass
         # skip windows too close to the end of the series to have future labels
         time_to_end_ns = (timestamps[-1] - t_end) / np.timedelta64(1, 'ns')
         if time_to_end_ns < max_horizon_ns:
@@ -75,10 +73,12 @@ def _to_ns_array(timestamps) -> np.ndarray:
 
 
 def compute_horizon_labels(timestamps, midprice: np.ndarray, horizons_minutes: list[int],
-                           threshold_bps: float) -> dict[int, np.ndarray]:
+                           threshold_bps: float, max_gap_factor: float = 1.5) -> dict[int, np.ndarray]:
     """Per-ROW label for each horizon h: class of the return from row i to the first row with
     timestamp >= t_i + h minutes (0 = down, 1 = flat, 2 = up; strict thresholds like the reference).
-    Rows whose horizon target lies beyond the last timestamp get IGNORE_LABEL. Vectorized via searchsorted.
+    Rows whose horizon target lies beyond the last timestamp, or whose target row is more than
+    `h * max_gap_factor` after t_i (the horizon spans a session gap / overnight break), get IGNORE_LABEL.
+    Vectorized via searchsorted.
     """
     ts = _to_ns_array(timestamps)
     mid = np.asarray(midprice, dtype=np.float64)
@@ -88,6 +88,9 @@ def compute_horizon_labels(timestamps, midprice: np.ndarray, horizons_minutes: l
     for h in horizons_minutes:
         fi = np.searchsorted(ts, ts + int(h) * 60_000_000_000, side="left")
         valid = fi < n
+        h_ns = int(h) * 60_000_000_000
+        elapsed = ts[np.minimum(fi, n - 1)] - ts
+        valid &= elapsed <= h_ns * float(max_gap_factor)
         fut = mid[np.minimum(fi, n - 1)]
         ret = (fut - mid) / mid
         lab = np.where(ret > thr, 2, np.where(ret < -thr, 0, 1)).astype(np.int64)
@@ -105,12 +108,13 @@ class WindowDataset(Dataset):
     """
 
     def __init__(self, features: np.ndarray, timestamps, midprice: np.ndarray, sequence_length: int,
-                 horizons_minutes: list[int], threshold_bps: float, stride: int = 1):
+                 horizons_minutes: list[int], threshold_bps: float, stride: int = 1,
+                 max_gap_factor: float = 1.5):
         self.features = np.ascontiguousarray(features, dtype=np.float32)
         self.seq_len = int(sequence_length)
         self.horizons = list(horizons_minutes)
         n = len(self.features)
-        row_labels = compute_horizon_labels(timestamps, midprice, self.horizons, threshold_bps)
+        row_labels = compute_horizon_labels(timestamps, midprice, self.horizons, threshold_bps, max_gap_factor)
         ends = np.arange(self.seq_len, n + 1, max(1, int(stride)))
         lab = np.stack([row_labels[h][ends - 1] for h in self.horizons], axis=1) if len(ends) else \
             np.zeros((0, len(self.horizons)), dtype=np.int64)

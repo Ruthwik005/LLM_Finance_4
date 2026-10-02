@@ -4,9 +4,21 @@ For every (variant, seed): train SAC (train split, validation-based best checkpo
 on fixed TEST windows -> run artifacts + DB rows. HEURISTIC and AVELLANEDA_STOIKOV are evaluated once on the
 same test windows. Per variant the key metrics are aggregated across seeds (mean +- std, ddof=1) into
 artifacts/evaluation/<experiment_id>_summary.{json,csv} and the DB table `experiment_aggregates`.
+
+Run ids / folders are stable and shared by every experiment: `<variant>_seed<N>` under artifacts/evaluation/ and
+artifacts/rl/<variant>/seed<N>/, baselines `heuristic` and `avellaneda_stoikov`. Consequently "latest wins":
+  * WITHOUT ``resume`` every run is retrained / re-evaluated and its folder overwritten.
+  * WITH ``resume`` a run is skipped only if it is complete (metrics.json, metadata.json and, for SAC runs,
+    best_model.zip) AND its metadata.json matches the current experiment: same experiment_id, fast_mode, training
+    budget (total_timesteps, eval_freq), number of test windows / test window starts, config hash (sac, features,
+    transformer, experiment windows, simulator, reward, evaluation, baselines) and feature-artifact hash. Otherwise it
+    is retrained and the reason is logged.
+  * ``fast=True`` defaults the experiment id to ``<id>_fast`` so smoke-test summaries never overwrite real ones
+    (the per-run folders are still shared; a real ``--resume`` run notices the fast_mode/budget mismatch and retrains).
 """
 from __future__ import annotations
 import csv
+import hashlib
 import json
 import os
 import time
@@ -22,7 +34,7 @@ from market_maker.db.writer import write_experiment_aggregates, write_run_to_db
 from market_maker.evaluation.backtest import run_backtest, write_run_artifacts
 from market_maker.evaluation.metrics import summarize_run
 from market_maker.evaluation.run_metadata import build_run_metadata
-from market_maker.features.pipeline import SPLITS, ensure_features, load_meta, lob_split_path
+from market_maker.features.pipeline import (SPLITS, columns_path, ensure_features, lob_split_path)
 from market_maker.training.env_factory import evenly_spaced_starts, make_env
 from market_maker.training.train_sac import train_sac_agent
 from market_maker.utils.logging import get_logger
@@ -39,6 +51,53 @@ FAST_BUDGET = dict(total_timesteps=600, eval_freq=300, learning_starts=100, buff
 
 def infer_data_mode(config_path: str) -> str:
     return "synthetic_smoke_test" if os.path.basename(config_path or "") == "fast_demo.yaml" else "mode_b"
+
+
+def default_experiment_id(cfg, fast: bool) -> str:
+    base = cfg.experiment_id
+    return f"{base}_fast" if fast else base
+
+
+def compute_config_hash(cfg, sac_cfg, n_val: int, n_test: int, episode_steps: int, feature_hash: str | None,
+                        baselines: bool = False) -> str:
+    """Hash of everything that determines a run's result besides seed/variant: effective SAC config (after fast
+    overrides), features, transformer, experiment windows, simulator, reward, evaluation (+ baselines for baseline
+    runs) and the feature-artifact hash."""
+    obj = {"sac": sac_cfg.model_dump(), "features": cfg.features.model_dump(),
+           "transformer": cfg.transformer.model_dump(),
+           "windows": {"n_val": n_val, "n_test": n_test, "episode_steps": episode_steps,
+                       "selection": cfg.experiment.window_selection},
+           "simulator": cfg.simulator.model_dump(), "reward": cfg.reward.model_dump(),
+           "evaluation": cfg.evaluation.model_dump(), "data": {"tick_size": cfg.data.tick_size, "depth": cfg.data.depth,
+                                                                 "split": cfg.data.split.model_dump()},
+           "feature_hash": feature_hash}
+    if baselines:
+        obj["baselines"] = cfg.baselines.model_dump()
+    return hashlib.sha256(json.dumps(obj, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+def _feature_hash_of(artifacts_dir: str, variant: str) -> str | None:
+    try:
+        with open(columns_path(artifacts_dir, variant)) as f:
+            obj = json.load(f)
+        return obj.get("feature_hash") if isinstance(obj, dict) else None
+    except OSError:
+        return None
+
+
+def check_run_completed(run_dir: str, expected: dict, model_path: str | None = None) -> tuple[bool, str]:
+    """(completed_and_matching, reason). `expected` keys must equal the values stored in metadata.json."""
+    mp, mdp = os.path.join(run_dir, "metrics.json"), os.path.join(run_dir, "metadata.json")
+    if not (os.path.exists(mp) and os.path.exists(mdp)):
+        return False, "metrics.json / metadata.json missing"
+    if model_path is not None and not os.path.exists(model_path):
+        return False, f"{os.path.basename(model_path)} missing"
+    with open(mdp) as f:
+        md = json.load(f)
+    for k, v in expected.items():
+        if md.get(k) != v:
+            return False, f"metadata {k} differs (stored {md.get(k)!r}, expected {v!r})"
+    return True, "ok"
 
 
 def run_id_for(variant: str, seed: int | None = None) -> str:
@@ -134,10 +193,10 @@ def _evaluate_agent(env, agent, is_heuristic, cfg, starts):
 
 def run_experiment(cfg, *, artifacts_dir: str = "artifacts", db_path: str | None = None, variants=None, seeds=None,
                    experiment_id: str | None = None, fast: bool = False, resume: bool = False,
-                   data_mode: str | None = None, config_path: str = "") -> dict:
+                   data_mode: str | None = None, config_path: str = "", force_features: bool = False) -> dict:
     variants = [v.upper() for v in (variants or cfg.experiment.variants)]
     seeds = list(seeds if seeds is not None else cfg.experiment.seeds)
-    exp_id = experiment_id or cfg.experiment_id
+    exp_id = experiment_id or default_experiment_id(cfg, fast)
     data_mode = data_mode or infer_data_mode(config_path)
     sac_cfg = apply_fast(cfg.sac) if fast else cfg.sac
     n_val, n_test = _n_val(cfg, fast), _n_test(cfg, fast)
@@ -148,9 +207,8 @@ def run_experiment(cfg, *, artifacts_dir: str = "artifacts", db_path: str | None
     init_db(engine)
 
     for v in variants:
-        ensure_features(cfg, artifacts_dir, v)
-    ensure_features(cfg, artifacts_dir, REFERENCE_VARIANT)  # baselines evaluate on the LOB-only block
-    meta = load_meta(artifacts_dir)
+        ensure_features(cfg, artifacts_dir, v, force=force_features)
+    ensure_features(cfg, artifacts_dir, REFERENCE_VARIANT, force=force_features)  # baselines use the LOB-only block
     split_frames = {s: pd.read_parquet(lob_split_path(artifacts_dir, s), columns=["timestamp"]) for s in SPLITS}
 
     test_env = make_env(cfg, REFERENCE_VARIANT, "test", artifacts_dir, "eval")
@@ -161,11 +219,19 @@ def run_experiment(cfg, *, artifacts_dir: str = "artifacts", db_path: str | None
 
     session = get_session(engine)
 
-    def _record(run_id, variant, seed, model_path, result, metrics, extra_meta, curve_csv=None):
+    def _identity(variant, seed, is_baseline):
+        fh = _feature_hash_of(artifacts_dir, REFERENCE_VARIANT if is_baseline else variant)
+        return {"experiment_id": exp_id, "fast_mode": fast, "variant": variant, "seed": seed,
+                "total_timesteps": None if is_baseline else sac_cfg.total_timesteps,
+                "eval_freq": None if is_baseline else sac_cfg.eval_freq,
+                "n_test_windows": len(test_starts), "test_windows": test_starts, "feature_hash": fh,
+                "config_hash": compute_config_hash(cfg, sac_cfg, n_val, n_test, L, fh, baselines=is_baseline)}
+
+    def _record(run_id, variant, seed, model_path, result, metrics, extra_meta, curve_csv=None, identity=None):
         run_dir = os.path.join(eval_root, run_id)
         md = build_run_metadata(cfg, data_mode=data_mode, model_path=model_path, variant=variant, splits=split_frames)
         md.update({"seed": seed, "experiment_id": exp_id, "test_windows": test_starts, "val_windows": val_starts,
-                   "fast_mode": fast, **extra_meta})
+                   "fast_mode": fast, **(identity or {}), **extra_meta})
         write_run_artifacts(run_dir, config=cfg.model_dump(), metadata=md, backtest_result=result, metrics=metrics)
         if curve_csv and os.path.exists(curve_csv):
             with open(curve_csv) as src, open(os.path.join(run_dir, "training_curve.csv"), "w") as dst:
@@ -173,9 +239,11 @@ def run_experiment(cfg, *, artifacts_dir: str = "artifacts", db_path: str | None
         write_run_to_db(session, run_id=run_id, variant=variant, seed=seed, model_path=model_path,
                         config=cfg.model_dump(), backtest_result=result, metrics=metrics)
 
-    def _completed(run_id):
-        return os.path.exists(os.path.join(eval_root, run_id, "metrics.json")) and \
-            os.path.exists(os.path.join(eval_root, run_id, "metadata.json"))
+    def _completed(run_id, identity, model_path=None):
+        ok, why = check_run_completed(os.path.join(eval_root, run_id), identity, model_path)
+        if not ok:
+            logger.info("resume: re-running %s (%s)", run_id, why)
+        return ok
 
     def _load_metrics(run_id):
         with open(os.path.join(eval_root, run_id, "metrics.json")) as f:
@@ -185,7 +253,8 @@ def run_experiment(cfg, *, artifacts_dir: str = "artifacts", db_path: str | None
     baseline_metrics: dict[str, dict] = {}
     for b in BASELINES:
         rid = run_id_for(b)
-        if resume and _completed(rid):
+        ident = _identity(b, 0, True)
+        if resume and _completed(rid, ident):
             baseline_metrics[b] = _load_metrics(rid)
             logger.info("resume: skipping completed baseline %s", rid)
             continue
@@ -193,13 +262,12 @@ def run_experiment(cfg, *, artifacts_dir: str = "artifacts", db_path: str | None
             agent = HeuristicMarketMaker()
         else:
             agent = AvellanedaStoikovMarketMaker(
-                gamma=cfg.baselines.gamma, kappa=cfg.baselines.kappa, rolling_vol_index=meta["rolling_vol_index"],
-                midprice_index=meta["midprice_index"], tick_size=cfg.data.tick_size,
+                gamma=cfg.baselines.gamma, kappa=cfg.baselines.kappa, tick_size=cfg.data.tick_size,
                 min_spread_ticks=cfg.simulator.min_spread_ticks, max_spread_ticks=cfg.simulator.max_spread_ticks,
                 max_mid_offset_ticks=cfg.simulator.max_mid_offset_ticks, episode_length_steps=L,
-                feature_mean=meta["feature_mean"], feature_scale=meta["feature_scale"])
+                vol_window=cfg.baselines.volatility_window)
         result, metrics = _evaluate_agent(test_env, agent, True, cfg, test_starts)
-        _record(rid, b, 0, "N/A", result, metrics, {})
+        _record(rid, b, 0, "N/A", result, metrics, {}, identity=ident)
         baseline_metrics[b] = metrics
 
     from stable_baselines3 import SAC
@@ -207,16 +275,16 @@ def run_experiment(cfg, *, artifacts_dir: str = "artifacts", db_path: str | None
     for variant in variants:
         for seed in seeds:
             rid = run_id_for(variant, seed)
-            if resume and _completed(rid):
+            model_dir = os.path.join(artifacts_dir, "rl", variant.lower(), f"seed{seed}")
+            ident = _identity(variant, seed, False)
+            if resume and _completed(rid, ident, os.path.join(model_dir, "best_model.zip")):
                 per_variant[variant].append(_load_metrics(rid))
                 logger.info("resume: skipping completed run %s", rid)
                 continue
-            model_dir = os.path.join(artifacts_dir, "rl", variant.lower(), f"seed{seed}")
             train_env = make_env(cfg, variant, "train", artifacts_dir, "train", seed=seed)
             val_env = make_env(cfg, variant, "validation", artifacts_dir, "eval")
             t0 = time.time()
-            tr = train_sac_agent(train_env, val_env, sac_cfg, seed=seed, out_dir=model_dir, val_starts=val_starts,
-                                 max_inventory=cfg.simulator.max_inventory)
+            tr = train_sac_agent(train_env, val_env, sac_cfg, seed=seed, out_dir=model_dir, val_starts=val_starts)
             train_s = time.time() - t0
             model = SAC.load(tr.best_model_path, device=sac_cfg.device)
             env = make_env(cfg, variant, "test", artifacts_dir, "eval")
@@ -224,9 +292,9 @@ def run_experiment(cfg, *, artifacts_dir: str = "artifacts", db_path: str | None
             timings[rid] = {"train_seconds": train_s, "steps_per_second": sac_cfg.total_timesteps / max(train_s, 1e-9)}
             _record(rid, variant, seed, tr.best_model_path, result, metrics,
                     {"best_step": tr.best_step, "best_val_reward": tr.best_val_reward,
-                     "total_timesteps": sac_cfg.total_timesteps, "train_seconds": train_s,
+                     "train_seconds": train_s,
                      "last_model_path": tr.last_model_path, "checkpoint_selection": "best validation mean reward"},
-                    curve_csv=tr.curve_path)
+                    curve_csv=tr.curve_path, identity=ident)
             per_variant[variant].append(metrics)
             logger.info("run %s done in %.1fs: mean_pnl=%s", rid, train_s, metrics.get("mean_pnl"))
 

@@ -6,7 +6,7 @@ import pandas as pd
 import gymnasium as gym
 
 from market_maker.env.market_making_env import MarketMakingEnv
-from market_maker.features.pipeline import columns_path, lob_split_path, variant_path
+from market_maker.features.pipeline import load_columns, lob_split_path, variant_path
 from market_maker.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -46,8 +46,7 @@ class RandomStartWrapper(gym.Wrapper):
 
 def load_split_arrays(artifacts_dir: str, variant: str, split: str, mmap: bool = True):
     feats = np.load(variant_path(artifacts_dir, variant, split), mmap_mode="r" if mmap else None)
-    with open(columns_path(artifacts_dir, variant)) as f:
-        cols = json.load(f)
+    cols = load_columns(artifacts_dir, variant)
     lob = pd.read_parquet(lob_split_path(artifacts_dir, split))
     if len(lob) != len(feats):
         raise ValueError(f"{variant}/{split}: {len(feats)} feature rows vs {len(lob)} LOB rows (stale artifacts?)")

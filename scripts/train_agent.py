@@ -35,7 +35,7 @@ def main() -> None:
     val_starts = evenly_spaced_starts(len(val_env.raw_lob_df), cfg.episode_steps, n_val)
     out_dir = os.path.join(args.artifacts_root, "rl", variant.lower(), f"seed{seed}")
     res = train_sac_agent(train_env, val_env, cfg.sac, seed=seed, out_dir=out_dir, val_starts=val_starts,
-                          total_timesteps=args.total_timesteps, max_inventory=cfg.simulator.max_inventory)
+                          total_timesteps=args.total_timesteps)
     logger.info("Best model (step %s, val reward %.4f): %s", res.best_step, res.best_val_reward, res.best_model_path)
     out = args.out or os.path.join(args.artifacts_root, "rl", "model.zip")  # flat copy: Makefile compatibility
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
