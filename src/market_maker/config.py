@@ -44,6 +44,20 @@ class TransformerConfig(BaseModel):
     horizons_minutes: list[int] = [1, 5]
     epochs: int = 10
     batch_size: int = 256
+    lr: float = 1e-3
+    weight_decay: float = 1e-2
+    patience: int = 3  # early stopping on validation loss (epochs without improvement)
+    num_workers: int = 0
+    window_stride: int = 1  # stride between consecutive training/validation windows (rows)
+    class_weights: bool = False  # weight CE by inverse train label frequency (flat class usually dominates)
+    embed_batch_size: int = 1024  # batch size when exporting embeddings for every row
+
+
+class FeaturesConfig(BaseModel):
+    vol_window: int = 20  # rolling window (snapshots) of the rolling_vol feature
+    return_lags: list[int] = [1, 5]
+    clip_value: float = 10.0  # standardized features are clipped to +-clip_value
+    label_threshold_bps: float = 5.0  # Transformer up/down label threshold (basis points of mid price)
 
 
 class SimulatorConfig(BaseModel):
@@ -81,6 +95,11 @@ class SacConfig(BaseModel):
     gamma: float = 0.99
     tau: float = 0.005
     ent_coef: str = "auto"
+    net_arch: list[int] = [256, 256]
+    eval_freq: int = 5_000  # steps between deterministic validation evaluations
+    n_eval_episodes: int = 5  # fixed validation windows per evaluation
+    checkpoint_freq: int = 0  # optional extra periodic checkpoints every N steps (0 = off)
+    device: str = "auto"  # SB3 device ("cpu" is usually fastest for small MLPs)
 
 
 class EvaluationConfig(BaseModel):
@@ -103,6 +122,16 @@ class ExperimentsConfig(BaseModel):
     run_td3: bool = False
 
 
+class ExperimentConfig(BaseModel):
+    name: str = "experiment"
+    experiment_id: str | None = None  # defaults to `name`
+    variants: list[str] = ["SAC_LOB_ONLY", "SAC_LOB_TRANSFORMER", "SAC_LOB_SENTIMENT", "SAC_FULL"]
+    seeds: list[int] = [0, 1, 2]
+    n_val_episodes: int | None = None  # None -> sac.n_eval_episodes
+    n_test_episodes: int = 20
+    window_selection: str = "evenly_spaced"  # deterministic evenly spaced val/test windows
+
+
 class AppConfig(BaseModel):
     project: ProjectConfig
     data: DataConfig
@@ -114,6 +143,16 @@ class AppConfig(BaseModel):
     experiments: ExperimentsConfig
     evaluation: EvaluationConfig = EvaluationConfig()
     baselines: BaselinesConfig = BaselinesConfig()
+    features: FeaturesConfig = FeaturesConfig()
+    experiment: ExperimentConfig = ExperimentConfig()
+
+    @property
+    def episode_steps(self) -> int:
+        return int((self.simulator.episode_minutes * 60 * 1000) / self.simulator.action_interval_ms)
+
+    @property
+    def experiment_id(self) -> str:
+        return self.experiment.experiment_id or self.experiment.name
 
 
 def load_config(path: str) -> AppConfig:

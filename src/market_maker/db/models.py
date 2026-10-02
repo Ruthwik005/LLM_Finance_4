@@ -71,3 +71,17 @@ class Step(Base):
     mtm_pnl: Mapped[float] = mapped_column(Float)
     placed_volume: Mapped[float] = mapped_column(Float)
     canceled_volume: Mapped[float] = mapped_column(Float)
+
+
+class ExperimentAggregate(Base):
+    """Mean +- std (ddof=1) of a metric across seeds of one variant within one experiment."""
+    __tablename__ = "experiment_aggregates"
+    __table_args__ = (Index("ix_expagg_experiment", "experiment_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    experiment_id: Mapped[str] = mapped_column(String)
+    variant: Mapped[str] = mapped_column(String)
+    metric: Mapped[str] = mapped_column(String)
+    mean: Mapped[float] = mapped_column(Float)
+    std: Mapped[float | None] = mapped_column(Float, nullable=True)  # NULL when n_seeds < 2
+    n_seeds: Mapped[int] = mapped_column(Integer)

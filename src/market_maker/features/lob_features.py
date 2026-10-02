@@ -5,7 +5,7 @@ from sklearn.preprocessing import StandardScaler
 
 
 def compute_lob_features(df: pd.DataFrame, depth: int, return_lags: list[int], vol_window: int = 20) -> pd.DataFrame:
-    df = df.sort_values("timestamp").reset_index(drop=True)
+    df = df.sort_values("timestamp", kind="stable").reset_index(drop=True)
     feats = pd.DataFrame(index=df.index)
 
     feats["midprice"] = (df["bid_price_1"] + df["ask_price_1"]) / 2

@@ -69,7 +69,15 @@ class MarketMakingEnv(gym.Env):
         super().reset(seed=seed)
         self._rng = np.random.default_rng(seed)
         self._step_idx = 0
-        self._data_idx = int(self._rng.integers(0, max(1, self._max_start)))
+        start = (options or {}).get("start_index")
+        if start is None:
+            self._data_idx = int(self._rng.integers(0, max(1, self._max_start)))
+        else:
+            # Deterministic window start (validation/test). Valid range keeps a full episode inside the data.
+            start = int(start)
+            if not 0 <= start <= max(0, self._max_start):
+                raise ValueError(f"start_index {start} outside [0, {max(0, self._max_start)}]")
+            self._data_idx = start
         self.account = AccountState(cash=0.0, inventory=0.0, realized_pnl=0.0, fees=0.0,
                                      filled_bid_volume=0.0, filled_ask_volume=0.0, turnover=0.0)
         # Outstanding resting orders keyed by (side, level); value = (Order with remaining volume, placed_step)

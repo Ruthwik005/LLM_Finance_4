@@ -29,6 +29,13 @@ transformer:
   horizons_minutes: [1, 5]
   epochs: 2
   batch_size: 64
+  lr: 0.001
+  weight_decay: 0.01
+  patience: 2
+  num_workers: 0
+  window_stride: 4
+  class_weights: false
+  embed_batch_size: 1024
 simulator:
   execution_mode: snapshot_approx
   reference_price_mode: midprice
@@ -60,6 +67,11 @@ sac:
   gamma: 0.99
   tau: 0.005
   ent_coef: auto
+  net_arch: [256, 256]
+  eval_freq: 500
+  n_eval_episodes: 3
+  checkpoint_freq: 0
+  device: cpu
 experiments:
   run_heuristic: true
   run_lob_only: true
@@ -74,3 +86,16 @@ baselines:
   gamma: 0.1
   kappa: 100.0
   volatility_window: 20
+features:
+  vol_window: 20
+  return_lags: [1, 5]
+  clip_value: 10.0
+  label_threshold_bps: 5.0
+experiment:
+  name: fast_demo
+  experiment_id: null
+  variants: [SAC_LOB_ONLY, SAC_LOB_TRANSFORMER, SAC_LOB_SENTIMENT, SAC_FULL]
+  seeds: [0, 1]
+  n_val_episodes: null
+  n_test_episodes: 4
+  window_selection: evenly_spaced

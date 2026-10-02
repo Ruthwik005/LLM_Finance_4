@@ -35,3 +35,14 @@ def write_run_to_db(session, run_id: str, variant: str, seed: int, model_path: s
     if rows:
         session.bulk_insert_mappings(Step, rows)
     session.commit()
+
+
+def write_experiment_aggregates(session, experiment_id: str, rows: list[dict]) -> None:
+    """Replace-on-rerun: rows = [{variant, metric, mean, std|None, n_seeds}, ...]."""
+    from market_maker.db.models import ExperimentAggregate
+    session.query(ExperimentAggregate).filter_by(experiment_id=experiment_id).delete()
+    for r in rows:
+        session.add(ExperimentAggregate(experiment_id=experiment_id, variant=r["variant"], metric=r["metric"],
+                                        mean=float(r["mean"]), std=None if r["std"] is None else float(r["std"]),
+                                        n_seeds=int(r["n_seeds"])))
+    session.commit()

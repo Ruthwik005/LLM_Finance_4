@@ -22,7 +22,7 @@ def validate_lob(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     df = df.drop_duplicates(keep="first")
     report["duplicate_removed"] = before_dedup - len(df)
 
-    df = df.sort_values("timestamp").reset_index(drop=True)
+    df = df.sort_values("timestamp", kind="stable").reset_index(drop=True)
     logger.info(
         "validate_lob: input=%d output=%d removed=%s",
         original_len, len(df), report,

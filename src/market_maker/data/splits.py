@@ -6,7 +6,7 @@ def chronological_split(
     df: pd.DataFrame, timestamp_col: str, train: float, validation: float, test: float
 ) -> dict[str, pd.DataFrame]:
     assert abs(train + validation + test - 1.0) < 1e-6, "split fractions must sum to 1"
-    df = df.sort_values(timestamp_col).reset_index(drop=True)
+    df = df.sort_values(timestamp_col, kind="stable").reset_index(drop=True)
     days = pd.to_datetime(df[timestamp_col]).dt.date
     unique_days = sorted(days.unique())
     n_days = len(unique_days)

@@ -6,13 +6,17 @@ import yaml
 import numpy as np
 
 
-def run_backtest(env, agent, n_episodes: int, is_heuristic: bool, max_inventory: float) -> dict:
+def run_backtest(env, agent, n_episodes: int, is_heuristic: bool, max_inventory: float,
+                 start_indices: list[int] | None = None) -> dict:
     """Run n_episodes. ``is_heuristic=True`` means the agent exposes
     ``predict(obs, inventory=, max_inventory=)`` (heuristic and Avellaneda-Stoikov); otherwise SB3 ``predict``."""
     episode_pnls, inventories, all_fills, all_orders, all_steps = [], [], [], [], []
+    if start_indices is not None:
+        n_episodes = len(start_indices)  # fixed evaluation windows (deterministic, identical across agents)
 
     for ep in range(n_episodes):
-        obs, _ = env.reset(seed=1000 + ep)
+        reset_opts = {"start_index": int(start_indices[ep])} if start_indices is not None else None
+        obs, _ = env.reset(seed=1000 + ep, options=reset_opts)
         done = False
         inventory_trace, ep_fills, ep_steps, ep_orders = [], [], [], []
         cumulative_pnl = 0.0
