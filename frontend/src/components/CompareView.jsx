@@ -6,6 +6,7 @@ import ChartTooltip from "./ChartTooltip";
 import DataTable from "./DataTable";
 import EmptyState from "./EmptyState";
 import { SkeletonCard } from "./Skeleton";
+import ExperimentsPanel from "./ExperimentsPanel";
 import StatusChip from "./StatusChip";
 import { AXIS_LINE, AXIS_TICK, GRID } from "./chartTheme";
 import { useAsync } from "../lib/hooks";
@@ -72,6 +73,7 @@ export default function CompareView({ runs, runsLoading, selectedRun, onSelect, 
 
   return (
     <>
+      <ExperimentsPanel refreshKey={refreshKey} />
       <section className="card fade-up" aria-label="Run comparison">
         <header className="card-head">
           <div>

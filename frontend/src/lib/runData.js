@@ -1,5 +1,5 @@
 import { useAsync } from "./hooks";
-import { getRunDetail, getRunMetrics, getRunEpisodes, getRunFills, getEquityCurve } from "../api";
+import { getRunDetail, getRunMetrics, getRunEpisodes, getRunFills, getEquityCurve, getPnlAttribution } from "../api";
 
 const LOADERS = {
   detail: getRunDetail,
@@ -7,6 +7,7 @@ const LOADERS = {
   episodes: getRunEpisodes,
   fills: getRunFills,
   equity: getEquityCurve,
+  attribution: getPnlAttribution,
 };
 
 /**

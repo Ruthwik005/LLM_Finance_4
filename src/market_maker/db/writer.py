@@ -20,7 +20,8 @@ def write_run_to_db(session, run_id: str, variant: str, seed: int, model_path: s
     for i, ep_fills in enumerate(backtest_result["fills"]):
         for fill in ep_fills:
             session.add(Fill(run_id=run_id, episode_index=i, side=fill["side"],
-                              price=float(fill["price"]), volume=float(fill["volume"])))
+                              price=float(fill["price"]), volume=float(fill["volume"]),
+                              step=int(fill["step"]) if fill.get("step") is not None else None))
     session.flush()
     rows = []
     for ep, ep_steps in enumerate(backtest_result.get("steps") or []):

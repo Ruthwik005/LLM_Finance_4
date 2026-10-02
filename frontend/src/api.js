@@ -33,3 +33,31 @@ export function getRunFills(runId) {
 export function getEquityCurve(runId) {
   return request(`/runs/${runId}/equity-curve`);
 }
+
+export function getRunsSummary() {
+  return request("/runs/summary").then((d) => d.runs);
+}
+
+export function getReplay(runId, episode, maxPoints = 2000) {
+  return request(`/runs/${encodeURIComponent(runId)}/episodes/${episode}/replay?max_points=${maxPoints}`);
+}
+
+export function getTrainingCurve(runId) {
+  return request(`/runs/${encodeURIComponent(runId)}/training-curve`).then((d) => d.points);
+}
+
+export function getPnlAttribution(runId) {
+  return request(`/runs/${encodeURIComponent(runId)}/pnl-attribution`);
+}
+
+export function listExperiments() {
+  return request("/experiments").then((d) => d.experiments);
+}
+
+export function getExperiment(experimentId) {
+  return request(`/experiments/${encodeURIComponent(experimentId)}`);
+}
+
+export function getSignals(split = "test", maxPoints = 2000) {
+  return request(`/signals?split=${split}&max_points=${maxPoints}`);
+}

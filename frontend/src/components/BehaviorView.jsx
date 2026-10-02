@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import ResponsiveContainer from "./AutoSize";
-import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, Tooltip, XAxis, YAxis } from "recharts";
-import { Coins, DollarSign, Ruler, Boxes } from "lucide-react";
+import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ReferenceLine, Tooltip, XAxis, YAxis } from "recharts";
+import { Coins, DollarSign, Ruler, Boxes, Ban, Percent, MoveHorizontal, Crosshair, ShieldAlert } from "lucide-react";
 import ChartCard from "./ChartCard";
 import ChartTooltip from "./ChartTooltip";
 import KpiCard from "./KpiCard";
@@ -12,7 +12,8 @@ import EmptyState from "./EmptyState";
 import NoRun from "./NoRun";
 import { AXIS_LINE, AXIS_TICK, GRID } from "./chartTheme";
 import { useRunData } from "../lib/runData";
-import { formatNumber, formatCurrency } from "../lib/format";
+import { formatNumber, formatCurrency, formatPercent } from "../lib/format";
+import { attributionStack } from "../lib/attribution";
 import { fillStats } from "../lib/derive";
 
 const PAGE = 50;
@@ -29,7 +30,7 @@ const COLUMNS = [
 ];
 
 export default function BehaviorView({ runId, refreshKey }) {
-  const { data, loading, error } = useRunData(runId, refreshKey, ["fills"]);
+  const { data, loading, error } = useRunData(runId, refreshKey, ["fills", "metrics", "attribution"]);
   const [side, setSide] = useState("all");
   const [episode, setEpisode] = useState("all");
   const [limit, setLimit] = useState(PAGE);
@@ -47,6 +48,8 @@ export default function BehaviorView({ runId, refreshKey }) {
     [fills, side, episode],
   );
   const stats = useMemo(() => fillStats(fills), [fills]);
+  const m = data?.metrics || {};
+  const attr = useMemo(() => attributionStack(data?.attribution), [data]);
 
   if (!runId) return <NoRun />;
   if (error) return <div className="card"><EmptyState hint={error} /></div>;
@@ -67,6 +70,39 @@ export default function BehaviorView({ runId, refreshKey }) {
           <KpiCard delay={120} label="Avg fill size" icon={Ruler} value={stats?.avgSize} format={(v) => formatNumber(v, 4)} />
         </div>
       )}
+
+      {busy ? (
+        <SkeletonKpis n={5} />
+      ) : (
+        <div className="kpi-grid kpi-grid-5">
+          <KpiCard delay={0} label="Cancel ratio" icon={Ban} value={m.cancel_ratio} format={(v) => formatPercent(v)} hint="Canceled / placed volume" />
+          <KpiCard delay={40} label="Fill rate" icon={Percent} value={m.fill_rate} format={(v) => formatPercent(v, 2)} hint="Filled / placed volume" />
+          <KpiCard delay={80} label="Avg quoted spread" icon={MoveHorizontal} value={m.avg_quoted_spread} format={(v) => `${formatNumber(v, 2)} ticks`} />
+          <KpiCard delay={120} label="Avg quote distance" icon={Crosshair} value={m.avg_quote_distance} format={(v) => `${formatNumber(v, 2)} ticks`} hint="From mid" />
+          <KpiCard delay={160} label="Adverse selection" icon={ShieldAlert} value={m.adverse_selection_ratio} format={(v) => formatPercent(v)} hint="Fills followed by an adverse move" />
+        </div>
+      )}
+
+      <ChartCard title="PnL attribution" subtitle="Spread capture vs inventory PnL vs fees and rebates (totals over all evaluation episodes)" loading={busy} empty={!attr} emptyHint="Attribution metrics are not available for this run." height={170}>
+        {attr && (
+          <>
+            <div role="img" aria-label="Stacked bar of PnL attribution by component" style={{ width: "100%", height: 150 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={attr.row} layout="vertical" stackOffset="sign" margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                  <CartesianGrid {...GRID} horizontal={false} vertical />
+                  <XAxis type="number" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={false} tickFormatter={(v) => formatNumber(v, 2)} />
+                  <YAxis type="category" dataKey="name" hide />
+                  <ReferenceLine x={0} stroke="var(--border-strong)" />
+                  <Tooltip cursor={{ fill: "var(--hover)" }} content={<ChartTooltip labelFormatter={() => "PnL attribution"} formatter={(v) => formatNumber(v, 4)} />} isAnimationActive={false} />
+                  <Legend wrapperStyle={{ fontSize: 12, color: "var(--text-2)" }} />
+                  {attr.parts.map((p) => <Bar key={p.key} dataKey={p.key} name={p.name} stackId="a" fill={p.color} isAnimationActive={false} maxBarSize={44} />)}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <p className="card-sub">Total PnL <b className={`mono ${attr.total >= 0 ? "pos" : "neg"}`}>{formatNumber(attr.total, 4)}</b></p>
+          </>
+        )}
+      </ChartCard>
 
       <div className="grid-2">
         <ChartCard title="Bid vs ask fills" subtitle="Share of fill count by side" loading={busy} empty={!stats} height={240}>

@@ -9,6 +9,8 @@ import PnlView from "./components/PnlView";
 import RiskView from "./components/RiskView";
 import BehaviorView from "./components/BehaviorView";
 import SignalsView from "./components/SignalsView";
+import ReplayView from "./components/ReplayView";
+import TrainingView from "./components/TrainingView";
 import CompareView from "./components/CompareView";
 import { listRuns, getRunDetail } from "./api";
 import { useAsync, useTheme } from "./lib/hooks";
@@ -54,7 +56,9 @@ export default function App() {
     case "pnl": content = <PnlView {...common} />; break;
     case "risk": content = <RiskView {...common} />; break;
     case "behavior": content = <BehaviorView {...common} />; break;
-    case "signals": content = <SignalsView />; break;
+    case "replay": content = <ReplayView {...common} runs={runs} variants={variants} />; break;
+    case "training": content = <TrainingView {...common} />; break;
+    case "signals": content = <SignalsView refreshKey={refreshKey} synthetic={synthetic} />; break;
     case "compare":
       content = <CompareView runs={runs} runsLoading={runsLoading} selectedRun={selectedRun} onSelect={setSelectedRun} refreshKey={refreshKey} />;
       break;

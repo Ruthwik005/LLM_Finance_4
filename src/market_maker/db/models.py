@@ -46,6 +46,7 @@ class Fill(Base):
     side: Mapped[str] = mapped_column(String)
     price: Mapped[float] = mapped_column(Float)
     volume: Mapped[float] = mapped_column(Float)
+    step: Mapped[int | None] = mapped_column(Integer, nullable=True)  # NULL for runs stored before WP3
 
 
 class Step(Base):

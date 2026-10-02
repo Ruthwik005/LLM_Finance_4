@@ -1,8 +1,20 @@
+import { useMemo, useState } from "react";
+import ResponsiveContainer from "./AutoSize";
+import { Area, AreaChart, Bar, CartesianGrid, ComposedChart, Legend, Line, ReferenceArea, Tooltip, XAxis, YAxis } from "recharts";
 import { Brain, Clock3, Database, LineChart as Trend } from "lucide-react";
 import StatusChip from "./StatusChip";
 import EmptyState from "./EmptyState";
+import ChartCard from "./ChartCard";
+import ChartTooltip from "./ChartTooltip";
+import Segmented from "./Segmented";
+import { SkeletonCard } from "./Skeleton";
+import { AXIS_LINE, AXIS_TICK, GRID } from "./chartTheme";
+import { getSignals } from "../api";
+import { useAsync } from "../lib/hooks";
+import { formatNumber } from "../lib/format";
+import { invalidRanges, probHorizons, signalRows, stackProbs } from "../lib/signals";
 
-const STATUS = "Computed offline · not wired into SAC_LOB_ONLY training";
+const STATUS = "Computed offline · used only by the SENTIMENT / TRANSFORMER / FULL variants (not SAC_LOB_ONLY)";
 
 const CARDS = [
   {
@@ -13,7 +25,7 @@ const CARDS = [
   {
     icon: Trend,
     title: "Transformer trend probabilities",
-    text: "A Transformer classifier emits up / flat / down trend probabilities from sliding windows of limit-order-book features. Outputs are stored offline and are not consumed by the agent.",
+    text: "A Transformer classifier emits up / flat / down trend probabilities from sliding windows of limit-order-book features. Outputs are cached offline and fed to the SAC_LOB_TRANSFORMER and SAC_FULL variants as extra observation features.",
   },
   {
     icon: Clock3,
@@ -60,16 +72,106 @@ function Timeline() {
   );
 }
 
-export default function SignalsView() {
+const tFmt = (t) => new Date(t).toISOString().slice(11, 16);
+const tAxis = { dataKey: "t", type: "number", domain: ["dataMin", "dataMax"], scale: "time", tickCount: 5, minTickGap: 48, tick: AXIS_TICK, axisLine: AXIS_LINE, tickLine: false, tickFormatter: tFmt };
+
+function SignalCharts({ payload, synthetic }) {
+  const rows = useMemo(() => signalRows(payload), [payload]);
+  const bad = useMemo(() => invalidRanges(rows), [rows]);
+  const horizons = useMemo(() => probHorizons(payload.series), [payload]);
+  const [h, setH] = useState(null);
+  const hz = h ?? horizons[0];
+  const probs = useMemo(() => (hz ? stackProbs(rows, hz) : []), [rows, hz]);
+  const has = (k) => k in (payload.series || {});
+  const shade = bad.map(([a, b], i) => <ReferenceArea key={i} x1={a} x2={b} fill="var(--amber)" fillOpacity={0.12} stroke="none" ifOverflow="hidden" />);
   return (
     <>
+      <section className="card notice fade-up" aria-label="Signal data provenance">
+        <span className="notice-icon" aria-hidden="true"><Database size={18} /></span>
+        <div>
+          <h3 className="card-title">Feature artifacts · {payload.split} split</h3>
+          <p className="card-sub">
+            {formatNumber(payload.n_points, 0)} of {formatNumber(payload.n_rows_total, 0)} rows shown (evenly strided). Values are the as-of aligned features the SAC variants consume.
+            {synthetic ? " Synthetic smoke-test data with stub sentiment: the numbers carry no information about markets." : ""}
+          </p>
+          {payload.notes?.map((n) => <p className="card-sub" key={n}>{n}</p>)}
+        </div>
+      </section>
+      <ChartCard title="Midprice and sentiment" subtitle="Midprice (left) with EWM sentiment overlay (right); amber shading = transformer signal not yet valid" height={300}
+        empty={!rows.length || !has("sentiment_ewm_30")} emptyHint="Sentiment columns are not present in this feature set.">
+        <div role="img" aria-label="Midprice line with sentiment overlay" style={{ width: "100%", height: 300 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={rows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid {...GRID} />
+              <XAxis {...tAxis} />
+              <YAxis yAxisId="p" tick={AXIS_TICK} axisLine={false} tickLine={false} width={64} domain={["auto", "auto"]} tickFormatter={(v) => formatNumber(v, 2)} />
+              <YAxis yAxisId="s" orientation="right" tick={AXIS_TICK} axisLine={false} tickLine={false} width={48} tickFormatter={(v) => formatNumber(v, 2)} />
+              <Tooltip content={<ChartTooltip labelFormatter={(l) => tFmt(l)} formatter={(v) => formatNumber(v, 4)} />} isAnimationActive={false} />
+              <Legend wrapperStyle={{ fontSize: 12, color: "var(--text-2)" }} />
+              {shade}
+              <Line yAxisId="p" type="monotone" dataKey="mid" name="Midprice" stroke="var(--text)" dot={false} strokeWidth={1.5} isAnimationActive={false} />
+              <Line yAxisId="s" type="monotone" dataKey="sentiment_ewm_30" name="Sentiment EWM 30m" stroke="var(--accent-2)" dot={false} strokeWidth={1.5} isAnimationActive={false} />
+              {has("sentiment_ewm_5") && <Line yAxisId="s" type="monotone" dataKey="sentiment_ewm_5" name="Sentiment EWM 5m" stroke="var(--blue)" dot={false} strokeWidth={1} strokeOpacity={0.7} isAnimationActive={false} />}
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      </ChartCard>
+      <div className="grid-2">
+        <ChartCard title="Article counts in window" subtitle="Articles visible as-of t within 5 / 30 / 120 minutes" height={260} empty={!rows.length || !has("article_count_30")}>
+          <div role="img" aria-label="Article counts over time" style={{ width: "100%", height: 260 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={rows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid {...GRID} />
+                <XAxis {...tAxis} />
+                <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={40} />
+                <Tooltip content={<ChartTooltip labelFormatter={(l) => tFmt(l)} formatter={(v) => formatNumber(v, 2)} />} isAnimationActive={false} />
+                <Legend wrapperStyle={{ fontSize: 12, color: "var(--text-2)" }} />
+                {shade}
+                <Bar dataKey="article_count_120" name="120 min" fill="var(--accent-soft)" stroke="var(--accent)" isAnimationActive={false} />
+                <Line type="stepAfter" dataKey="article_count_30" name="30 min" stroke="var(--accent-2)" dot={false} isAnimationActive={false} />
+                <Line type="stepAfter" dataKey="article_count_5" name="5 min" stroke="var(--blue)" dot={false} isAnimationActive={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </ChartCard>
+        <ChartCard title="Transformer trend probabilities" subtitle="Stacked down / flat / up probability" height={260} empty={!rows.length || !horizons.length}
+          actions={horizons.length > 1 && <Segmented label="Horizon" value={String(hz)} onChange={(v) => setH(Number(v))} options={horizons.map((x) => ({ value: String(x), label: `${x} min` }))} />}>
+          <div role="img" aria-label="Stacked area chart of transformer down, flat and up probabilities" style={{ width: "100%", height: 260 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={probs} stackOffset="expand" margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid {...GRID} />
+                <XAxis {...tAxis} />
+                <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={40} domain={[0, 1]} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
+                <Tooltip content={<ChartTooltip labelFormatter={(l) => tFmt(l)} formatter={(v) => `${formatNumber(v * 100, 1)}%`} />} isAnimationActive={false} />
+                <Legend wrapperStyle={{ fontSize: 12, color: "var(--text-2)" }} />
+                {shade}
+                <Area type="monotone" dataKey="down" name="Down" stackId="p" stroke="var(--red)" fill="var(--red-soft)" isAnimationActive={false} />
+                <Area type="monotone" dataKey="flat" name="Flat" stackId="p" stroke="var(--text-3)" fill="var(--hover)" isAnimationActive={false} />
+                <Area type="monotone" dataKey="up" name="Up" stackId="p" stroke="var(--green)" fill="var(--green-soft)" isAnimationActive={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </ChartCard>
+      </div>
+    </>
+  );
+}
+
+export default function SignalsView({ refreshKey, synthetic }) {
+  const { data: payload, loading } = useAsync(async () => getSignals("test", 1500).catch(() => null), [refreshKey]);
+  const live = payload && payload.available === true;
+  const reason = payload && payload.available === false ? payload.reason : undefined;
+  return (
+    <>
+      {loading && !payload && <SkeletonCard h={300} />}
+      {live && <SignalCharts payload={payload} synthetic={synthetic} />}
       <section className="card notice fade-up" aria-label="Pipeline overview">
         <span className="notice-icon" aria-hidden="true"><Database size={18} /></span>
         <div>
           <h3 className="card-title">Offline NLP pipeline</h3>
           <p className="card-sub">
-            The sentiment and temporal-signal components are validated separately from the market-making agent. They are shown here
-            for transparency and do not influence the results on the other screens.
+            Sentiment and temporal-signal features are built offline and only enter the agent variants that name them
+            (SAC_LOB_SENTIMENT, SAC_LOB_TRANSFORMER, SAC_FULL). SAC_LOB_ONLY and the baselines never see them.
           </p>
         </div>
       </section>
@@ -98,15 +200,17 @@ export default function SignalsView() {
         <Timeline />
       </section>
 
-      <section className="card fade-up" aria-label="Signal outputs">
-        <header className="card-head">
-          <div>
-            <h3 className="card-title">Signal outputs</h3>
-            <p className="card-sub">Per-run sentiment and trend outputs are not exposed by the results API.</p>
-          </div>
-        </header>
-        <EmptyState compact hint="No sentiment or trend values are displayed because none feed this run." />
-      </section>
+      {!live && !loading && (
+        <section className="card fade-up" aria-label="Signal outputs">
+          <header className="card-head">
+            <div>
+              <h3 className="card-title">Signal outputs</h3>
+              <p className="card-sub">Real series appear here once the feature artifacts exist.</p>
+            </div>
+          </header>
+          <EmptyState compact hint={reason || "No sentiment or trend values are displayed because the feature artifacts are unavailable."} />
+        </section>
+      )}
     </>
   );
 }
