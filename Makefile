@@ -9,7 +9,7 @@ install-frontend:
 
 sample-data:
 	python -c "from market_maker.data.sample_data import generate_synthetic_lob, generate_synthetic_news; \
-	lob = generate_synthetic_lob(50000, 5, 'BTCUSDT', 42); lob.to_parquet('data/processed/lob.parquet'); \
+	lob = generate_synthetic_lob(100000, 5, 'BTCUSDT', 42); lob.to_parquet('data/processed/lob.parquet'); \
 	news = generate_synthetic_news(200, 'BTCUSDT', lob, 42); news.to_parquet('data/processed/news.parquet')"
 
 prepare:

@@ -16,3 +16,4 @@ artifacts/*/*
 .env
 *.egg-info/
 .pytest_cache/
+.claude/
