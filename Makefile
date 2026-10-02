@@ -1,4 +1,4 @@
-.PHONY: install install-frontend demo-data sample-data prepare sentiment transformer train evaluate evaluate-sac report api frontend demo test
+.PHONY: collect-lob download-public prepare-fnspid install install-frontend demo-data sample-data prepare sentiment transformer train evaluate evaluate-sac report api frontend demo test
 
 install:
 	python -m venv .venv
@@ -52,3 +52,12 @@ demo:
 test:
 	pytest -q
 	cd frontend && npx vitest run
+
+collect-lob:
+	python scripts/collect_binance_lob.py --duration-minutes 30 --merge --merge-out data/processed/lob_binance.parquet
+
+download-public:
+	python scripts/download_binance_public.py --symbol BTCUSDT --start 2023-06-01 --end 2023-06-01 --max-rows 1000000
+
+prepare-fnspid:
+	python scripts/prepare_fnspid.py --tickers AAPL --max-rows 5000

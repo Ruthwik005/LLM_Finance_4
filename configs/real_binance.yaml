@@ -1,0 +1,78 @@
+# Mode B: real Binance order book (self-collected, depth 5; tick 0.01 for BTCUSDT spot) + real FNSPID equity news.
+# News and book are NOT causally matched. Public bookTicker data is depth 1 -> set data.depth: 1 if using it.
+project:
+  seed: 42
+  device: auto
+data:
+  lob_path: data/processed/lob_binance.parquet
+  news_path: data/raw/news/fnspid_AAPL.parquet
+  symbol: BTCUSDT
+  depth: 5
+  tick_size: 0.01
+  timezone: UTC
+  split:
+    train: 0.70
+    validation: 0.15
+    test: 0.15
+sentiment:
+  enabled: true
+  model_name: ProsusAI/finbert
+  batch_size: 16
+  lookback_minutes: [5, 30, 120]
+  max_age_minutes: 240
+transformer:
+  enabled: true
+  sequence_length: 32
+  d_model: 32
+  nhead: 2
+  num_layers: 1
+  dim_feedforward: 64
+  dropout: 0.1
+  horizons_minutes: [1, 5]
+  epochs: 2
+  batch_size: 64
+simulator:
+  execution_mode: snapshot_approx
+  reference_price_mode: midprice
+  episode_minutes: 20
+  action_interval_ms: 500
+  total_volume_per_side: 20
+  levels_per_side: 2
+  min_spread_ticks: 1
+  max_spread_ticks: 8
+  max_mid_offset_ticks: 4
+  max_inventory: 100
+  latency_steps: 0
+  fee_per_unit: 0.0
+  rebate_per_unit: 0.0
+  pnl_scale: 50.0
+reward:
+  type: truncated_inventory
+  inventory_threshold: 40
+  inventory_penalty: 0.001
+  cancellation_penalty: 0.0001
+  adverse_selection_penalty: 0.0
+  scale: 1.0
+sac:
+  total_timesteps: 200000  # placeholder: tune
+  learning_rate: 0.0003
+  buffer_size: 100000
+  learning_starts: 2000
+  batch_size: 64
+  gamma: 0.99
+  tau: 0.005
+  ent_coef: auto
+experiments:
+  run_heuristic: true
+  run_lob_only: true
+  run_lob_transformer: true
+  run_lob_sentiment: true
+  run_full: true
+  run_td3: false
+evaluation:
+  adverse_horizon_steps: 10
+  adverse_threshold_ticks: 1.0
+baselines:
+  gamma: 0.1
+  kappa: 100.0
+  volatility_window: 20
