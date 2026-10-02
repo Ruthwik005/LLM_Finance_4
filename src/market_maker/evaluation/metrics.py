@@ -125,8 +125,14 @@ def summarize_run(backtest_result: dict, config) -> dict:
     fills = [f for s in all_steps for f in s["fills"]]
     out["n_fills"] = float(len(fills))
     filled_vol = float(sum(f["volume"] for f in fills))
-    out["fees_paid"] = fee * filled_vol
-    out["rebates_received"] = rebate * filled_vol
+    if all_steps and all("fees_paid" in s and "rebates_received" in s for s in all_steps):
+        # Prefer the env's own per-fill accounting as logged per step.
+        out["fees_paid"] = float(sum(s["fees_paid"] for s in all_steps))
+        out["rebates_received"] = float(sum(s["rebates_received"] for s in all_steps))
+    else:
+        # Fallback for older runs whose step logs lack the fields: recompute from config rates.
+        out["fees_paid"] = fee * filled_vol
+        out["rebates_received"] = rebate * filled_vol
     spread_capture = float(sum(
         f["volume"] * ((f["mid"] - f["price"]) if f["side"] == "bid" else (f["price"] - f["mid"])) for f in fills))
     out["spread_capture_pnl"] = spread_capture

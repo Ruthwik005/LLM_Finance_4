@@ -55,7 +55,11 @@ class MarketMakingEnv(gym.Env):
         self.execution_sim = SnapshotExecutionSimulator(tick_size=tick_size, latency_steps=self.latency_steps)
 
         n_features = fused_features.shape[1]
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(n_features + PRIVATE_STATE_DIM,), dtype=np.float32)
+        # market features unbounded; private block: inv [-1,1], mtm tanh [-1,1], remaining [0,1],
+        # bid/ask distance [-1,1], spread [0,1]
+        low = np.concatenate([np.full(n_features, -np.inf), [-1.0, -1.0, 0.0, -1.0, -1.0, 0.0]]).astype(np.float32)
+        high = np.concatenate([np.full(n_features, np.inf), [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]]).astype(np.float32)
+        self.observation_space = spaces.Box(low=low, high=high, dtype=np.float32)
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
 
         self._max_start = len(raw_lob_df) - episode_length_steps - 1
@@ -129,8 +133,13 @@ class MarketMakingEnv(gym.Env):
             ("ask", 0): Order(side="ask", price=ask_price_l1, volume=ask_vol_l1),
             ("ask", 1): Order(side="ask", price=ask_price_l2, volume=ask_vol_l2),
         }
-        # Quote persistence (spec 15.2): unchanged price keeps its remaining volume (and queue/latency state);
-        # a changed price or a reduced volume cancels the old remaining volume and places the new volume.
+        # Quote persistence (spec 15.2): an unchanged price keeps its remaining volume (and queue/latency state).
+        #  - desired > remaining: the slot is topped up to the desired volume; the difference is counted as
+        #    placed_volume in the step log (top-ups are treated as plain placed volume, no queue-priority model).
+        #  - desired < remaining: the difference is canceled (counted as canceled_volume); the rest keeps priority.
+        #  - changed price: the old remaining volume is canceled and the new volume placed (restarts latency).
+        # Desired volumes are already clamped so that per-side total <= max_inventory -/+ inventory, hence even if
+        # every outstanding order filled, |inventory| <= max_inventory.
         placed_volume = 0.0
         canceled_volume = 0.0
         reconciled: dict[tuple[str, int], tuple[Order, int]] = {}
@@ -138,9 +147,15 @@ class MarketMakingEnv(gym.Env):
             old = self._outstanding_orders.get(key)
             if old is not None:
                 old_order, old_step = old
-                if abs(old_order.price - new.price) < 1e-12 and new.volume >= old_order.volume - 1e-12:
-                    if old_order.volume > 0:
-                        reconciled[key] = (old_order, old_step)
+                if abs(old_order.price - new.price) < 1e-12 and new.volume > 0:
+                    diff = new.volume - old_order.volume
+                    if diff > 1e-12:
+                        placed_volume += diff
+                        old_order.volume = new.volume
+                    elif diff < -1e-12:
+                        canceled_volume += -diff
+                        old_order.volume = new.volume
+                    reconciled[key] = (old_order, old_step)
                     continue
                 canceled_volume += old_order.volume
             if new.volume > 0:
@@ -170,6 +185,7 @@ class MarketMakingEnv(gym.Env):
         )
         next_ref_price = compute_reference_price(next_row["bid_price_1"], next_row["ask_price_1"], self.reference_price_mode)
         fills = [dict(f, mid=float(next_ref_price)) for f in fills]
+        fees_before, rebates_before = self.account.fees, self.account.rebates
         for fill in fills:
             self.account.apply_fill(fill["side"], fill["price"], fill["volume"], self.fee_per_unit,
                                     self.rebate_per_unit)
@@ -179,6 +195,8 @@ class MarketMakingEnv(gym.Env):
                 if o.side == fill["side"] and abs(o.price - fill["price"]) < 1e-12:
                     o.volume -= fill["volume"]
                     break
+        step_fees = self.account.fees - fees_before
+        step_rebates = self.account.rebates - rebates_before
         self._outstanding_orders = {k: v for k, v in self._outstanding_orders.items() if v[0].volume > 1e-12}
         new_mtm = self.account.mark_to_market(next_ref_price)
         delta_mtm = new_mtm - prev_mtm
@@ -212,6 +230,8 @@ class MarketMakingEnv(gym.Env):
             "fills": [dict(f) for f in fills],
             "placed_volume": float(placed_volume),
             "canceled_volume": float(canceled_volume),
+            "fees_paid": float(step_fees),
+            "rebates_received": float(step_rebates),
         }
         info = {"fills": fills, "canceled_volume": canceled_volume, "placed_volume": placed_volume,
                 "inventory": self.account.inventory, "cash": self.account.cash,

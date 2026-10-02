@@ -14,7 +14,8 @@ logger = get_logger(__name__)
 
 
 def build_env_for_split(cfg, split_df):
-    feats = compute_lob_features(split_df, depth=cfg.data.depth, return_lags=[1, 5])
+    feats = compute_lob_features(split_df, depth=cfg.data.depth, return_lags=[1, 5],
+                                 vol_window=cfg.baselines.volatility_window)
     feature_cols = [c for c in feats.columns if c != "timestamp"]
     fused = feats[feature_cols].to_numpy(dtype=np.float32)
     episode_steps = int((cfg.simulator.episode_minutes * 60 * 1000) / cfg.simulator.action_interval_ms)

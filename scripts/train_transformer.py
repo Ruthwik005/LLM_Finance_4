@@ -26,8 +26,10 @@ def main() -> None:
     df = load_lob(cfg.data.lob_path)
     df, _ = validate_lob(df)
     splits = chronological_split(df, "timestamp", **cfg.data.split.model_dump())
-    train_feats = compute_lob_features(splits["train"], depth=cfg.data.depth, return_lags=[1, 5])
-    val_feats = compute_lob_features(splits["validation"], depth=cfg.data.depth, return_lags=[1, 5])
+    train_feats = compute_lob_features(splits["train"], depth=cfg.data.depth, return_lags=[1, 5],
+                                       vol_window=cfg.baselines.volatility_window)
+    val_feats = compute_lob_features(splits["validation"], depth=cfg.data.depth, return_lags=[1, 5],
+                                     vol_window=cfg.baselines.volatility_window)
 
     feature_cols = [c for c in train_feats.columns if c != "timestamp"]
     X_train, y_train = build_windows(train_feats, feature_cols, cfg.transformer.sequence_length,

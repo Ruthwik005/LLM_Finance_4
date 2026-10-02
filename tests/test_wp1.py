@@ -59,7 +59,14 @@ def test_inventory_fraction_in_observation_after_fill():
 
 
 def test_check_env_with_private_state():
-    check_env(_env(list(map(tuple, np.tile([99.99, 100.01], (10, 1)))), 4), skip_render_check=True)
+    env = _env(list(map(tuple, np.tile([99.99, 100.01], (10, 1)))), 4)
+    env.fused_features = np.random.default_rng(0).normal(size=(10, 3)).astype(np.float32)
+    check_env(env, skip_render_check=True)
+    obs, _ = env.reset(seed=0)
+    assert env.observation_space.contains(obs)
+    for _ in range(3):
+        obs, *_ = env.step(env.action_space.sample())
+        assert env.observation_space.contains(obs)
 
 
 def test_quote_persistence_no_cancel_when_unchanged():
@@ -87,8 +94,9 @@ def test_partial_fill_remainder_persists():
     _, _, _, _, i1 = env.step(ACT)
     assert i1["inventory"] == 5.0
     _, _, _, _, i2 = env.step(ACT)
-    assert i2["step_log"]["bid_volumes"][0] == pytest.approx(15.0)  # remainder persists, not re-placed
-    assert i2["placed_volume"] == 0 and i2["canceled_volume"] == 0
+    # remainder persists with its priority; the filled 5 is topped up back to the desired 20 (placed volume)
+    assert i2["step_log"]["bid_volumes"][0] == pytest.approx(20.0)
+    assert i2["placed_volume"] == pytest.approx(5.0) and i2["canceled_volume"] == 0
 
 
 def test_latency_delays_fill_eligibility():
@@ -258,3 +266,140 @@ def test_db_steps_rows_replace_on_rerun(tmp_path):
     assert s.query(Step).filter_by(run_id="r1").count() == 40
     row = s.query(Step).filter_by(run_id="r1", episode=1, step=3).one()
     assert row.bid_1 > 0 and row.timestamp is not None
+
+
+# ---------------- WP1 review fixes ----------------
+def _lob_env(max_inv=30.0, ep_len=300, **kw):
+    lob = generate_synthetic_lob(n_rows=ep_len + 400, depth=2, symbol="BTCUSDT", seed=11)
+    args = dict(fused_features=np.zeros((len(lob), 4), dtype=np.float32), raw_lob_df=lob,
+                feature_columns=list("abcd"), tick_size=0.01, levels_per_side=2, min_spread_ticks=1,
+                max_spread_ticks=8, max_mid_offset_ticks=4, total_volume_per_side=20.0, max_inventory=max_inv,
+                fee_per_unit=0.001, rebate_per_unit=0.0005, reward_config=REWARD,
+                reference_price_mode="midprice", episode_length_steps=ep_len)
+    args.update(kw)
+    return MarketMakingEnv(**args)
+
+
+def _action_streams(n):
+    rng = np.random.default_rng(3)
+    buy = np.array([1.0, -1.0, 1.0, -1.0], dtype=np.float32)
+    sell = np.array([-1.0, -1.0, -1.0, 1.0], dtype=np.float32)
+    return {
+        "random": [rng.uniform(-1, 1, 4).astype(np.float32) for _ in range(n)],
+        "max_buy": [buy] * n,
+        "max_sell": [sell] * n,
+        "alternating": [buy if i % 7 < 3 else sell for i in range(n)],
+    }
+
+
+@pytest.mark.parametrize("latency", [0, 1])
+@pytest.mark.parametrize("kind", ["random", "max_buy", "max_sell", "alternating"])
+def test_fuzz_inventory_hard_limit(kind, latency):
+    env = _lob_env(latency_steps=latency)
+    env.reset(seed=1)
+    for a in _action_streams(300)[kind]:
+        _, _, _, trunc, info = env.step(a)
+        assert abs(info["inventory"]) <= env.max_inventory + 1e-9
+        if trunc:
+            break
+
+
+@pytest.mark.parametrize("latency", [0, 1])
+def test_volume_conservation_per_side(latency):
+    env = _lob_env(latency_steps=latency)
+    env.reset(seed=2)
+
+    def outstanding():
+        out = {"bid": 0.0, "ask": 0.0}
+        for (side, _), (o, _) in env._outstanding_orders.items():
+            out[side] += o.volume
+        return out
+
+    for a in _action_streams(300)["random"]:
+        before = outstanding()
+        _, _, _, trunc, info = env.step(a)
+        after = outstanding()
+        log = info["step_log"]
+        # placed/canceled are logged per step (not per side); conservation holds on the side totals.
+        filled = {"bid": 0.0, "ask": 0.0}
+        for f in log["fills"]:
+            filled[f["side"]] += f["volume"]
+        total_before, total_after = sum(before.values()), sum(after.values())
+        assert total_after == pytest.approx(total_before + log["placed_volume"] - log["canceled_volume"]
+                                            - sum(filled.values()), abs=1e-3)
+        assert sum(log["bid_volumes"]) >= 0
+        if trunc:
+            break
+
+
+def test_per_side_conservation_via_logged_volumes():
+    # logged quoted volumes are post-reconcile, pre-fill outstanding per side
+    env = _lob_env()
+    env.reset(seed=4)
+    prev_after = {"bid": 0.0, "ask": 0.0}
+    for a in _action_streams(200)["random"]:
+        _, _, _, trunc, info = env.step(a)
+        log = info["step_log"]
+        after = {"bid": 0.0, "ask": 0.0}
+        for (side, _), (o, _) in env._outstanding_orders.items():
+            after[side] += o.volume
+        for side, vols in (("bid", log["bid_volumes"]), ("ask", log["ask_volumes"])):
+            filled = sum(f["volume"] for f in log["fills"] if f["side"] == side)
+            assert after[side] == pytest.approx(sum(vols) - filled, abs=1e-6)
+        if trunc:
+            break
+
+
+def test_pnl_decomposition_cross_check():
+    env = _lob_env(ep_len=200)
+    res = run_backtest(env, HeuristicMarketMaker(), 2, True, env.max_inventory)
+    cfg = {"data": {"tick_size": 0.01}, "simulator": {"fee_per_unit": 999.0, "rebate_per_unit": 999.0},
+           "evaluation": {}}  # wrong config rates on purpose: logged values must win
+    m = summarize_run(res, cfg)
+    assert m["fees_paid"] > 0 and m["rebates_received"] > 0 and m["n_fills"] > 0
+    total = sum(res["episode_pnls"])
+    # independent inventory pnl: sum of (inventory held into the step) * (mid move)
+    inv_pnl = 0.0
+    for ep in res["steps"]:
+        prev_inv = 0.0
+        for st in ep:
+            inv_pnl += prev_inv * (st["next_mid"] - st["mid"])
+            prev_inv = st["inventory"]
+    assert total == pytest.approx(m["spread_capture_pnl"] + inv_pnl - m["fees_paid"] + m["rebates_received"], abs=1e-2)
+    assert m["inventory_pnl"] == pytest.approx(inv_pnl, abs=1e-2)
+
+
+def test_top_up_when_desired_exceeds_remaining():
+    env = _env([FLAT] * 8, 5)
+    env.reset(seed=0)
+    half = np.array([0.0, -1.0, 0.0, -1.0], dtype=np.float32)  # bid L1 10 / L2 10 (same prices as ACT-like)
+    full = np.array([0.0, -1.0, 1.0, -1.0], dtype=np.float32)  # bid L1 20 / L2 0
+    _, _, _, _, i1 = env.step(half)
+    assert i1["step_log"]["bid_volumes"] == [10.0, 10.0]
+    _, _, _, _, i2 = env.step(full)
+    assert i2["placed_volume"] == pytest.approx(10.0)  # L1 topped up 10->20 (counts as placed)
+    assert i2["canceled_volume"] == pytest.approx(10.0 + 0.0)  # bid L2 10 canceled; ask side unchanged...
+    assert i2["step_log"]["bid_volumes"][0] == pytest.approx(20.0)
+    assert i2["step_log"]["bid_volumes"][1] == pytest.approx(0.0)
+    # reducing back keeps the existing order and cancels only the difference
+    _, _, _, _, i3 = env.step(half)
+    assert i3["step_log"]["bid_volumes"][0] == pytest.approx(10.0)
+    assert i3["canceled_volume"] == pytest.approx(10.0)
+    assert i3["placed_volume"] == pytest.approx(10.0)  # L2 re-placed
+
+
+def test_latency_with_persistence_and_repricing():
+    rows = [FLAT, (100.01, 99.99), (100.01, 99.99), (100.01, 99.99), (100.01, 99.99), (100.01, 99.99)]
+    # persisted order keeps its original eligibility: fills at step 1 although re-submitted unchanged
+    e = _env(rows, 4, latency_steps=1)
+    e.reset(seed=0)
+    assert e.step(ACT)[4]["inventory"] == 0.0
+    assert e.step(ACT)[4]["inventory"] == 20.0
+    # re-pricing at step 1 restarts latency: new order eligible only at step 2
+    shifted = np.array([0.5, -1.0, 1.0, -1.0], dtype=np.float32)  # bid 100.01 crosses next ask 99.99
+    e = _env(rows, 4, latency_steps=1)
+    e.reset(seed=0)
+    assert e.step(ACT)[4]["inventory"] == 0.0
+    i = e.step(shifted)[4]
+    assert i["inventory"] == 0.0 and i["canceled_volume"] > 0
+    assert e.step(shifted)[4]["inventory"] == 20.0

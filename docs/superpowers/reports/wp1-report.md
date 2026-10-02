@@ -21,3 +21,11 @@ No existing test needed changes. 17 new tests in `tests/test_wp1.py`; full suite
 ## Notes
 - On synthetic data the quotes follow the mid every snapshot, so cancel_ratio is ~0.95+; spread_capture is negative because fills are priced against the next snapshot's mid. These are properties of the snapshot approximation, not tuned.
 - AS default kappa=100 (per price unit) was chosen so the spread is a few ticks at tick 0.01; retune for other price scales.
+
+## Fixes (review follow-up)
+
+- Quote persistence now tops up: same price with desired > remaining raises the slot to the desired volume and counts the difference as `placed_volume` (top-ups get no queue-priority modeling; the original order's latency/eligibility is kept). desired < remaining cancels only the difference (counted as canceled) and keeps the order. Desired volumes remain clamped by current inventory, so per-side outstanding never exceeds the inventory headroom.
+- Step logs carry `fees_paid` and `rebates_received` from the env's per-fill accounting; `summarize_run` sums them and falls back to config rates only for older logs lacking the fields.
+- `vol_window=cfg.baselines.volatility_window` is passed in `train_agent.py` and `train_transformer.py` (`evaluate.py` already did).
+- `observation_space` has real bounds on the private block; market features stay unbounded.
+- New tests: inventory fuzz (random + adversarial, latency 0/1), volume conservation, PnL decomposition cross-check with an independent inventory-PnL computation, top-up, latency + persistence.
