@@ -43,8 +43,10 @@ export default function App() {
 
   useEffect(() => {
     if (!runs.length) return;
-    setSelectedRun((cur) => (cur && runs.includes(cur) ? cur : runs[0]));
-  }, [runs]);
+    // Prefer a learned (SAC) run as the default: baselines have no training curve.
+    const preferred = runs.find((id) => String(variants[id] || "").startsWith("SAC_")) ?? runs[0];
+    setSelectedRun((cur) => (cur && runs.includes(cur) ? cur : preferred));
+  }, [runs, variants]);
 
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
   const synthetic =
