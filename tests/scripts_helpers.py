@@ -2,7 +2,8 @@
 import numpy as np
 import pandas as pd
 
-from market_maker.features.pipeline import base_features_path, load_meta, lob_split_path, transformer_checkpoint_path
+from market_maker.features.pipeline import base_features_path, load_meta, lob_split_path, transformer_checkpoint_path, \
+    transformer_binding
 from market_maker.features.temporal_dataset import WindowDataset
 from market_maker.models.transformer_encoder import TemporalTransformer
 from market_maker.models.transformer_train import fit_transformer
@@ -26,7 +27,7 @@ def train_tiny_transformer(cfg, art):
               dim_feedforward=t.dim_feedforward, dropout=t.dropout, horizons=t.horizons_minutes)
     model = TemporalTransformer(**kw)
     extra = {"feature_cols": meta["lob_feature_columns"], "sequence_length": t.sequence_length,
-             "horizons_minutes": t.horizons_minutes, "model_kwargs": kw}
+             "horizons_minutes": t.horizons_minutes, "model_kwargs": kw, **transformer_binding(meta)}
     return fit_transformer(model, ds("train"), ds("validation"), epochs=2, batch_size=32, lr=1e-3, weight_decay=0.01,
                            patience=2, device="cpu", checkpoint_path=transformer_checkpoint_path(art),
                            checkpoint_extra=extra, use_class_weights=True)

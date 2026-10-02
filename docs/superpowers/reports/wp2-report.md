@@ -149,3 +149,12 @@ smoke-experiments: build_features --stub-sentiment, train_transformer, build_fea
   `mid_vs_ma`; test-split mean check relaxed to `> 0`), columns.json readers. New: `tests/test_wp2_review.py`.
 - Smoke in temp dirs (100k synthetic rows): base 1.7 s, Transformer 2.6 s, fusion 2.3 s, `run_experiments --fast` 2 variants x 2 seeds 10.9 s,
   `--resume` rerun 1.5 s (all 6 runs skipped).
+
+## Addendum: Transformer checkpoint bound to base features
+
+`scripts/train_transformer.py` now stores `base_feature_hash` (= `lob_hash` from feature_meta.json) and
+`scaler_sha256` in the checkpoint `extra`. `build_variant_features` and `ensure_features` verify the stored base hash
+against the current one before embedding/fusing; a mismatch or a legacy checkpoint without a hash raises with
+instructions to retrain (`python scripts/train_transformer.py --config <cfg>`). Experts can pass
+`--allow-stale-transformer` (`scripts/build_features.py`; `allow_stale_transformer=True` in the API): this logs a loud
+warning and records `transformer_stale: true` in feature_meta.json. Tests: `tests/test_transformer_binding.py`.

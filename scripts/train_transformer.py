@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from market_maker.config import load_config
 from market_maker.features.pipeline import (SPLITS, base_features_path, load_meta, lob_split_path,
-                                             transformer_checkpoint_path, features_dir)
+                                             transformer_checkpoint_path, features_dir, transformer_binding)
 from market_maker.features.temporal_dataset import WindowDataset
 from market_maker.models.transformer_encoder import TemporalTransformer
 from market_maker.models.transformer_train import fit_transformer, resolve_device
@@ -53,7 +53,7 @@ def main() -> None:
     out = args.out or transformer_checkpoint_path(args.artifacts_dir)
     extra = {"feature_cols": cols, "sequence_length": t.sequence_length, "horizons_minutes": t.horizons_minutes,
              "scaler_path": meta["scaler_path"], "label_threshold_bps": cfg.features.label_threshold_bps,
-             "model_kwargs": model_kwargs, "config": cfg.model_dump(), "seed": cfg.project.seed}
+             "model_kwargs": model_kwargs, "config": cfg.model_dump(), "seed": cfg.project.seed, **transformer_binding(meta)}
     history = fit_transformer(
         model, train_ds, val_ds, epochs=args.epochs or t.epochs, batch_size=t.batch_size, lr=t.lr,
         weight_decay=t.weight_decay, patience=t.patience, device=resolve_device(args.device or cfg.project.device),

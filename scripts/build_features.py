@@ -23,6 +23,8 @@ def main() -> None:
                    help="SMOKE TESTS ONLY: deterministic synthetic scores labeled 'synthetic_stub' instead of FinBERT")
     p.add_argument("--no-sentiment", action="store_true", help="skip sentiment features entirely")
     p.add_argument("--device", default="auto", help="auto|cpu|cuda|mps for FinBERT / Transformer inference")
+    p.add_argument("--allow-stale-transformer", action="store_true",
+                   help="EXPERT: fuse embeddings from a checkpoint not bound to the current base features (recorded)")
     args = p.parse_args()
     cfg = load_config(args.config)
     t0 = time.time()
@@ -32,7 +34,8 @@ def main() -> None:
         logger.info("base stage done in %.1fs", time.time() - t0)
     if args.stage in ("fusion", "all"):
         variants = args.variants or cfg.experiment.variants or SAC_VARIANTS
-        res = build_variant_features(cfg, args.artifacts_dir, variants, device=args.device)
+        res = build_variant_features(cfg, args.artifacts_dir, variants, device=args.device,
+                                     allow_stale_transformer=args.allow_stale_transformer)
         for v, why in res["skipped"].items():
             logger.warning("SKIPPED %s: %s", v, why)
     logger.info("build_features finished in %.1fs", time.time() - t0)

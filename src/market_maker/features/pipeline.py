@@ -140,6 +140,35 @@ def variant_feature_hash(cfg, artifacts_dir: str, variant: str, meta: dict) -> s
     return _hash_obj(comp)
 
 
+def transformer_binding(meta: dict) -> dict:
+    """Base-feature binding stored in the Transformer checkpoint `extra` at training time."""
+    sp = meta.get("scaler_path")
+    return {"base_feature_hash": meta.get("lob_hash"),
+            "scaler_sha256": file_sha256(sp) if sp and os.path.exists(sp) else None}
+
+
+def check_transformer_binding(meta: dict, extra: dict, allow_stale: bool = False) -> bool:
+    """Verify the checkpoint was trained on the CURRENT base features. Returns True iff stale-but-allowed."""
+    stored = extra.get("base_feature_hash")
+    if stored is not None and stored == meta.get("lob_hash"):
+        return False
+    why = ("has no base-feature hash (legacy checkpoint)" if stored is None else
+           f"was trained on base features {stored}, current base features are {meta.get('lob_hash')}")
+    if allow_stale:
+        logger.warning("!!! STALE TRANSFORMER ALLOWED (--allow-stale-transformer): checkpoint %s; embeddings come "
+                       "from a model trained on a different feature distribution. Results are NOT trustworthy. "
+                       "Recorded as transformer_stale=true in feature_meta.json.", why)
+        return True
+    raise RuntimeError(f"Transformer checkpoint {why}. Retrain it on the current base features: "
+                       f"`python scripts/train_transformer.py --config <cfg>` (expert override: "
+                       f"--allow-stale-transformer).")
+
+
+def _checkpoint_extra(path: str) -> dict:
+    import torch
+    return torch.load(path, map_location="cpu", weights_only=False)["extra"]
+
+
 def _dump_json(path: str, obj) -> None:
     with open(path, "w") as f:
         json.dump(obj, f, indent=2)
@@ -365,7 +394,8 @@ def _write_variant_split(path: str, lob: np.ndarray, sent: np.ndarray | None, tr
     del out
 
 
-def build_variant_features(cfg, artifacts_dir: str, variants: list[str] | None = None, device: str = "auto") -> dict:
+def build_variant_features(cfg, artifacts_dir: str, variants: list[str] | None = None, device: str = "auto",
+                           allow_stale_transformer: bool = False) -> dict:
     """Embed (if a Transformer checkpoint exists) and fuse the requested variants. Returns {built, skipped}."""
     from market_maker.models.embedding import embed_all, load_frozen_transformer
     fdir = features_dir(artifacts_dir)
@@ -383,6 +413,7 @@ def build_variant_features(cfg, artifacts_dir: str, variants: list[str] | None =
     need_tr = any(VARIANT_USES[v][1] for v in variants)
     built, skipped = [], {}
     clipfr: dict = {}
+    tr_stale = False
 
     sent_blocks, sent_cols, tr_cols = {}, [], []
     if need_sent:
@@ -409,6 +440,7 @@ def build_variant_features(cfg, artifacts_dir: str, variants: list[str] | None =
         else:
             dev = resolve_device(device if device != "auto" else cfg.project.device)
             model, extra = load_frozen_transformer(ckpt, dev)
+            tr_stale = check_transformer_binding(meta, extra, allow_stale_transformer)
             if extra["feature_cols"] != lob_cols:
                 raise ValueError("Transformer checkpoint was trained on different feature columns; retrain it")
             seq_len = int(extra["sequence_length"])
@@ -444,8 +476,13 @@ def build_variant_features(cfg, artifacts_dir: str, variants: list[str] | None =
     _dump_json(sc_path, scalers)
     for grp, by_split in clipfr.items():
         _warn_clipping(by_split, float(meta.get("max_clipped_fraction", cfg.features.max_clipped_fraction)), grp)
-    if clipfr:
-        meta["extras_clip_fractions"] = {**meta.get("extras_clip_fractions", {}), **clipfr}
+    if tr_stale:
+        meta["transformer_stale"] = True
+    elif tr_blocks:
+        meta.pop("transformer_stale", None)
+    if clipfr or tr_stale or tr_blocks:
+        if clipfr:
+            meta["extras_clip_fractions"] = {**meta.get("extras_clip_fractions", {}), **clipfr}
         _dump_json(os.path.join(fdir, "feature_meta.json"), meta)
 
     for v in variants:
@@ -492,7 +529,8 @@ def feature_staleness(cfg, artifacts_dir: str, variant: str, news_path: str | No
     return None
 
 
-def ensure_features(cfg, artifacts_dir: str, variant: str, force: bool = False, **kw) -> None:
+def ensure_features(cfg, artifacts_dir: str, variant: str, force: bool = False,
+                    allow_stale_transformer: bool = False, **kw) -> None:
     """Make sure up-to-date features exist for `variant`.
 
     Missing or variant-level-stale arrays (changed Transformer checkpoint / settings) are (re)built. If the BASE
@@ -502,6 +540,16 @@ def ensure_features(cfg, artifacts_dir: str, variant: str, force: bool = False, 
     variant = variant.upper()
     uses_s, _ = VARIANT_USES[variant]
     st = feature_staleness(cfg, artifacts_dir, variant, news_path=kw.get("news_path"), lob_path=kw.get("lob_path"))
+    ckpt = transformer_checkpoint_path(artifacts_dir)
+    if VARIANT_USES[variant][1] and os.path.exists(ckpt) and (st is None or st[0] == "variant"):
+        # the checkpoint must be bound to the current base features, even when the fused arrays look up to date
+        meta = load_meta(artifacts_dir)
+        stale = check_transformer_binding(meta, _checkpoint_extra(ckpt), allow_stale_transformer)
+        if stale and st is None:
+            if not meta.get("transformer_stale"):
+                meta["transformer_stale"] = True
+                _dump_json(os.path.join(features_dir(artifacts_dir), "feature_meta.json"), meta)
+            return
     if st is None:
         return
     level, reason = st
@@ -513,6 +561,6 @@ def ensure_features(cfg, artifacts_dir: str, variant: str, force: bool = False, 
             f"force=True (run_experiments.py --force-features) to rebuild automatically.")
     if level in ("missing", "base"):
         build_base_features(cfg, artifacts_dir, with_sentiment=uses_s, **kw)
-    res = build_variant_features(cfg, artifacts_dir, [variant])
+    res = build_variant_features(cfg, artifacts_dir, [variant], allow_stale_transformer=allow_stale_transformer)
     if variant in res["skipped"]:
         raise RuntimeError(f"cannot build {variant}: {res['skipped'][variant]}")
