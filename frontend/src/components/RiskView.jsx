@@ -1,5 +1,6 @@
 import { useMemo } from "react";
-import { Area, AreaChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import ResponsiveContainer from "./AutoSize";
+import { Area, AreaChart, CartesianGrid, ReferenceLine, Tooltip, XAxis, YAxis } from "recharts";
 import { Layers, Maximize2, Scale, TrendingDown } from "lucide-react";
 import ChartCard from "./ChartCard";
 import ChartTooltip from "./ChartTooltip";

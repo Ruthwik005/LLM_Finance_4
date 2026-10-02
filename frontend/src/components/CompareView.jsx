@@ -1,5 +1,6 @@
 import { useMemo } from "react";
-import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import ResponsiveContainer from "./AutoSize";
+import { Bar, BarChart, CartesianGrid, Legend, Tooltip, XAxis, YAxis } from "recharts";
 import ChartCard from "./ChartCard";
 import ChartTooltip from "./ChartTooltip";
 import DataTable from "./DataTable";

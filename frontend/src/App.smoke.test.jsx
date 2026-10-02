@@ -33,10 +33,11 @@ const tabs = (el) => [...el.querySelectorAll('[role="tab"]')];
 describe("App smoke", () => {
   it("renders every view with data without throwing", async () => {
     const el = await mount(async (url) => {
-      const path = url.replace("http://localhost:8000", "");
+      const path = new URL(url).pathname;
       return { ok: path in routes, status: 200, json: async () => routes[path] };
     });
-    expect(el.textContent).toContain("Data mode: Mode B");
+    // synthetic runs must NOT claim real-LOB provenance
+    expect(el.textContent).not.toContain("Data mode: Mode B");
     expect(el.textContent).toContain("SOFTWARE SMOKE TEST ONLY");
     for (const t of tabs(el)) {
       await act(async () => { t.click(); });

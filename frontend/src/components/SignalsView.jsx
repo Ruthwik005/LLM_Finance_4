@@ -13,7 +13,7 @@ const CARDS = [
   {
     icon: Trend,
     title: "Transformer trend probabilities",
-    text: "A Transformer classifier emits up / flat / down trend probabilities from the sentiment and price features. Outputs are stored offline and are not consumed by the agent.",
+    text: "A Transformer classifier emits up / flat / down trend probabilities from sliding windows of limit-order-book features. Outputs are stored offline and are not consumed by the agent.",
   },
   {
     icon: Clock3,

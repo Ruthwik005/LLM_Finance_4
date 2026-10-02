@@ -1,4 +1,4 @@
-.PHONY: install install-frontend sample-data prepare sentiment transformer train evaluate evaluate-sac report api frontend demo test
+.PHONY: install install-frontend demo-data sample-data prepare sentiment transformer train evaluate evaluate-sac report api frontend demo test
 
 install:
 	python -m venv .venv
@@ -6,6 +6,9 @@ install:
 
 install-frontend:
 	cd frontend && npm install
+
+demo-data: sample-data prepare train evaluate evaluate-sac
+	@echo "Demo runs created (heuristic_baseline, sac_lob_only). Start 'make api' and 'make frontend'."
 
 sample-data:
 	python -c "from market_maker.data.sample_data import generate_synthetic_lob, generate_synthetic_news; \
@@ -34,8 +37,10 @@ evaluate-sac:
 report:
 	python scripts/generate_report.py
 
+PORT ?= 8000
+
 api:
-	uvicorn market_maker.api.main:app --reload
+	uvicorn market_maker.api.main:app --reload --port $(PORT)
 
 frontend:
 	cd frontend && npm run dev

@@ -1,4 +1,5 @@
-import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, Tooltip, XAxis, YAxis } from "recharts";
+import ResponsiveContainer from "./AutoSize";
 import { ArrowDownRight, ArrowUpRight, Percent, TrendingDown, Gauge } from "lucide-react";
 import ChartCard from "./ChartCard";
 import EquityChart from "./EquityChart";

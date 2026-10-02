@@ -22,7 +22,7 @@ function Meta({ icon: Icon, label, children }) {
   );
 }
 
-export default function OverviewView({ runId, refreshKey }) {
+export default function OverviewView({ runId, refreshKey, synthetic }) {
   const { data, loading, error } = useRunData(runId, refreshKey, ["detail", "metrics", "episodes", "fills", "equity"]);
   if (!runId) return <NoRun />;
   if (loading && !data) {
@@ -53,7 +53,7 @@ export default function OverviewView({ runId, refreshKey }) {
 
   return (
     <>
-      <div className="kpi-grid">
+      <div className="kpi-grid kpi-grid-6">
         <KpiCard delay={0} label="Mean PnL" icon={TrendingUp} value={m.mean_pnl} format={(v) => formatCurrency(v)} colorBySign spark={eqSpark} />
         <KpiCard delay={40} label="Median PnL" icon={Sigma} value={m.median_pnl} format={(v) => formatCurrency(v)} colorBySign spark={pnlSpark} />
         <KpiCard delay={80} label="PnL Std Dev" icon={Activity} value={m.std_pnl} format={(v) => formatCurrency(v)} />
@@ -95,7 +95,9 @@ export default function OverviewView({ runId, refreshKey }) {
         <div>
           <h3 className="card-title">Data mode</h3>
           <p className="notice-text">
-            Data mode: Mode B — real crypto LOB; FNSPID news validated separately, not causally matched to this LOB.
+            {synthetic
+              ? "SOFTWARE SMOKE TEST ONLY - NOT A FINANCIAL PERFORMANCE RESULT. This run uses synthetic demo data."
+              : "Data mode: Mode B — real crypto LOB; FNSPID news validated separately, not causally matched to this LOB."}
           </p>
           <p className="card-sub">
             Results shown here come from a research backtest. Metrics are illustrative of software behavior and are not a claim of

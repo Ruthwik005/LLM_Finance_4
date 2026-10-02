@@ -55,10 +55,13 @@ python scripts/run_all.py --config configs/experiment_full.yaml
 
 ## Frontend / API
 
+No results yet? `make demo-data` generates synthetic data, trains a small SAC agent and creates two demo runs
+(labeled as synthetic smoke-test data in the UI).
+
 In separate terminals:
 
 ```bash
-make api         # FastAPI, http://localhost:8000/docs
+make api         # FastAPI, http://localhost:8000/docs  (port busy? `make api PORT=8765` and set VITE_API_URL=http://localhost:8765 in frontend/.env.local)
 make frontend    # React (Vite) dev server, http://localhost:5173
 ```
 

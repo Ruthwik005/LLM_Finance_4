@@ -1,5 +1,6 @@
 import { useId } from "react";
-import { Area, AreaChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import ResponsiveContainer from "./AutoSize";
+import { Area, AreaChart, CartesianGrid, ReferenceLine, Tooltip, XAxis, YAxis } from "recharts";
 import ChartTooltip from "./ChartTooltip";
 import { AXIS_LINE, AXIS_TICK, GRID } from "./chartTheme";
 import { formatCurrency, formatCompact } from "../lib/format";

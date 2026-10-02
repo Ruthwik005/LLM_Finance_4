@@ -25,14 +25,19 @@ export default function App() {
     const ids = await listRuns().catch(() => []);
     const details = await Promise.allSettled(ids.map((id) => getRunDetail(id)));
     const variants = {};
+    const dataModes = {};
     ids.forEach((id, i) => {
-      if (details[i].status === "fulfilled") variants[id] = details[i].value?.variant;
+      if (details[i].status === "fulfilled") {
+        variants[id] = details[i].value?.variant;
+        dataModes[id] = details[i].value?.data_mode;
+      }
     });
-    return { ids: ids || [], variants };
+    return { ids: ids || [], variants, dataModes };
   }, [refreshKey]);
 
   const runs = runData?.ids ?? NO_RUNS;
   const variants = runData?.variants ?? NO_VARIANTS;
+  const dataModes = runData?.dataModes ?? NO_VARIANTS;
 
   useEffect(() => {
     if (!runs.length) return;
@@ -40,10 +45,11 @@ export default function App() {
   }, [runs]);
 
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
-  const synthetic = looksSynthetic(selectedRun, variants[selectedRun]);
+  const synthetic =
+    dataModes[selectedRun] === "synthetic_smoke_test" || looksSynthetic(selectedRun, variants[selectedRun]);
 
   let content;
-  const common = { runId: selectedRun, refreshKey };
+  const common = { runId: selectedRun, refreshKey, synthetic };
   switch (view) {
     case "pnl": content = <PnlView {...common} />; break;
     case "risk": content = <RiskView {...common} />; break;

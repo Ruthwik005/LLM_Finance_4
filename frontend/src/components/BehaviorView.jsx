@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import ResponsiveContainer from "./AutoSize";
+import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, Tooltip, XAxis, YAxis } from "recharts";
 import { Coins, DollarSign, Ruler, Boxes } from "lucide-react";
 import ChartCard from "./ChartCard";
 import ChartTooltip from "./ChartTooltip";

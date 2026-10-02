@@ -22,9 +22,11 @@ export default function Topbar({ view, runs, runsLoading, selectedRun, onSelect,
         </div>
       </div>
       <div className="topbar-chips">
-        <StatusChip tone="info" icon={Radio} title="Data mode">
-          Data mode: Mode B — real crypto LOB; FNSPID news validated separately, not causally matched to this LOB.
-        </StatusChip>
+        {!synthetic && (
+          <StatusChip tone="info" icon={Radio} title="Data mode">
+            Data mode: Mode B — real crypto LOB; FNSPID news validated separately, not causally matched to this LOB.
+          </StatusChip>
+        )}
         <StatusChip tone="warn" icon={FlaskConical}>
           Research backtest · not financial advice
         </StatusChip>

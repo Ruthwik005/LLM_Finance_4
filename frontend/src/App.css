@@ -111,6 +111,7 @@
 .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--s4); }
 .kpi-grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .kpi-grid-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.kpi-grid-6 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
 /* ---------- Cards ---------- */
 .card {
@@ -242,7 +243,7 @@
   .kpi-value { font-size: 22px; }
 }
 @media (max-width: 560px) {
-  .kpi-grid, .kpi-grid-4, .kpi-grid-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); }
+  .kpi-grid, .kpi-grid-4, .kpi-grid-5, .kpi-grid-6 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); }
   .card { padding: var(--s4); }
   .topbar-actions { width: 100%; }
   .runselect { flex: 1; min-width: 0; }

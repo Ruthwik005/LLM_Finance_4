@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,7 +8,7 @@ from market_maker.db.models import Run, Metric, Episode, Fill
 
 app = FastAPI(title="Market Maker Results API")
 app.add_middleware(
-    CORSMiddleware, allow_origins=["http://localhost:5173"],
+    CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_methods=["GET"], allow_headers=["*"],
 )
 
@@ -18,6 +19,16 @@ init_db(ENGINE)
 
 def _session():
     return get_session(ENGINE)
+
+
+def _read_data_mode(run_id: str) -> str | None:
+    """data_mode lives in the run's file-artifact metadata.json (None if unavailable)."""
+    path = os.path.join("artifacts", "evaluation", run_id, "metadata.json")
+    try:
+        with open(path) as f:
+            return json.load(f).get("data_mode")
+    except (OSError, ValueError):
+        return None
 
 
 def _require_run(session, run_id: str) -> Run:
@@ -48,7 +59,8 @@ def run_detail(run_id: str):
     try:
         run = _require_run(session, run_id)
         result = {"run_id": run.run_id, "variant": run.variant, "seed": run.seed,
-                  "model_path": run.model_path, "created_at": run.created_at.isoformat()}
+                  "model_path": run.model_path, "created_at": run.created_at.isoformat(),
+                  "data_mode": _read_data_mode(run_id)}
         return result
     finally:
         session.close()
